@@ -1,0 +1,9 @@
+[package]
+name = "wgsl_linker_reference"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1.0"
+winnow = { version = "0.6.13", features = ["unstable-recover"] }
+unicode-ident = "1.0"
