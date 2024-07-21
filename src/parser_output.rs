@@ -1,6 +1,4 @@
-use std::ops::Range;
-
-pub struct Variable(pub Range<usize>);
+pub struct Variable(pub (usize, usize));
 
 pub enum AstNode {
     Declare(Variable),

@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use winnow::{
     ascii::{digit0, digit1, hex_digit1},
     combinator::{alt, cut_err, empty, eof, opt, repeat},
@@ -15,23 +17,23 @@ pub enum Token<'a> {
     Paren(char),
     Number,
     Word(&'a str),
-    Trivia,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SpannedToken<'a> {
-    token: Token<'a>,
-    start: usize,
+    pub token: Token<'a>,
+    pub span: (usize, usize),
 }
-impl<'a> From<(Token<'a>, usize)> for SpannedToken<'a> {
-    fn from((token, start): (Token<'a>, usize)) -> Self {
-        Self { token, start }
+impl<'a> From<(Token<'a>, Range<usize>)> for SpannedToken<'a> {
+    fn from((token, span): (Token<'a>, Range<usize>)) -> Self {
+        Self {
+            token,
+            span: (span.start, span.end),
+        }
     }
 }
 
 pub type TokenizerInput<'a> = Recoverable<Located<&'a str>, ContextError>;
-
-// TODO: Impl Location for Input https://docs.rs/winnow/latest/src/winnow/stream/mod.rs.html#1330
 
 // We implement ContainsToken so that we can match against tokens in the parser.
 // (https://docs.rs/winnow/latest/winnow/_topic/stream/index.html)
@@ -68,33 +70,33 @@ impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>>
     }
 }
 
-impl<'a> winnow::stream::ContainsToken<Token<'a>> for SpannedToken<'a> {
+impl<'a> winnow::stream::ContainsToken<SpannedToken<'a>> for Token<'a> {
     #[inline(always)]
-    fn contains_token(&self, token: Token<'a>) -> bool {
-        self.token == token
+    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
+        *self == token.token
     }
 }
 
-impl<'a> winnow::stream::ContainsToken<Token<'a>> for &'_ [SpannedToken<'a>] {
+impl<'a> winnow::stream::ContainsToken<SpannedToken<'a>> for &'_ [Token<'a>] {
     #[inline]
-    fn contains_token(&self, token: Token<'a>) -> bool {
-        self.iter().any(|t| t.token == token)
+    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
+        self.iter().any(|t| *t == token.token)
     }
 }
 
-impl<'a, const LEN: usize> winnow::stream::ContainsToken<Token<'a>>
-    for &'_ [SpannedToken<'a>; LEN]
+impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>>
+    for &'_ [Token<'a>; LEN]
 {
     #[inline]
-    fn contains_token(&self, token: Token<'a>) -> bool {
-        self.iter().any(|t| t.token == token)
+    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
+        self.iter().any(|t| *t == token.token)
     }
 }
 
-impl<'a, const LEN: usize> winnow::stream::ContainsToken<Token<'a>> for [SpannedToken<'a>; LEN] {
+impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>> for [Token<'a>; LEN] {
     #[inline]
-    fn contains_token(&self, token: Token<'a>) -> bool {
-        self.iter().any(|t| t.token == token)
+    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
+        self.iter().any(|t| *t == token.token)
     }
 }
 
@@ -112,16 +114,27 @@ impl Tokenizer {
     }
 
     pub fn tokens<'a>(input: &mut TokenizerInput<'a>) -> PResult<Vec<SpannedToken<'a>>> {
-        repeat(0.., Self::token).parse_next(input)
+        repeat(0.., Self::token)
+            .fold(
+                || Vec::new(),
+                |mut acc, token| {
+                    match token {
+                        Some(token) => acc.push(token),
+                        None => {}
+                    }
+                    acc
+                },
+            )
+            .parse_next(input)
     }
 
-    pub fn token<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+    pub fn token<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<SpannedToken<'a>>> {
         alt((
-            Self::trivia,
-            Self::number,
-            Self::word,
-            Self::symbol,
-            Self::paren,
+            Self::trivia.map(|_| None),
+            Self::number.map(Some),
+            Self::word.map(Some),
+            Self::symbol.map(Some),
+            Self::paren.map(Some),
         ))
         .parse_next(input)
     }
@@ -135,19 +148,19 @@ impl Tokenizer {
             ':',
         ])
         .with_span()
-        .map(|(v, span)| (Token::Paren(v), span.start).into())
+        .map(|(v, span)| (Token::Paren(v), span).into())
         .parse_next(input)
     }
 
     pub fn paren<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
         one_of(['(', ')', '[', ']', '{', '}'])
             .with_span()
-            .map(|(v, span)| (Token::Paren(v), span.start).into())
+            .map(|(v, span)| (Token::Paren(v), span).into())
             .parse_next(input)
     }
 
     /// Parses at least one whitespace or comment.
-    pub fn trivia<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+    pub fn trivia<'a>(input: &mut TokenizerInput<'a>) -> PResult<()> {
         repeat(
             1..,
             alt((
@@ -157,8 +170,7 @@ impl Tokenizer {
             )),
         )
         .fold(|| (), |acc, _| acc)
-        .span()
-        .map(|span| (Token::Trivia, span.start).into())
+        .void()
         .parse_next(input)
     }
 
@@ -207,7 +219,7 @@ impl Tokenizer {
     pub fn word<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
         Self::ident_pattern_token
             .with_span()
-            .map(|(v, span)| (Token::Word(v), span.start).into())
+            .map(|(v, span)| (Token::Word(v), span).into())
             .parse_next(input)
     }
 
@@ -230,7 +242,7 @@ impl Tokenizer {
     pub fn number<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
         alt((Self::hex_literal, Self::decimal_literal))
             .span()
-            .map(|span| (Token::Number, span.start).into())
+            .map(|span| (Token::Number, span).into())
             .parse_next(input)
     }
 
