@@ -4,15 +4,15 @@ use winnow::{
         alt, cut_err, delimited, empty, eof, fail, not, opt, preceded, repeat, separated,
         separated_pair, seq, terminated,
     },
+    error::ContextError,
     stream::Recoverable,
     token::{none_of, one_of, take_until, take_while},
     Located, PResult, Parser,
 };
 
-use crate::{
-    global_item::{GlobalItem, GlobalItems},
-    tokenizer::{opt_spaces, spaces, Input},
-};
+use crate::{parser_output::Ast, tokenizer::SpannedToken, WgslParseError};
+
+pub type Input<'a> = Recoverable<Located<&'a [SpannedToken<'a>]>, ContextError>;
 
 /// A basic parser for the purposes of linking multiple WGSL modules together. It needs to parse
 /// - Identifiers in declarations
@@ -29,14 +29,18 @@ use crate::{
 pub struct WgslParser;
 
 impl WgslParser {
-    pub fn parse(
-        input: &str,
-    ) -> Result<(), winnow::error::ParseError<Input, winnow::error::ContextError>> {
+    pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, WgslParseError> {
         let input = Recoverable::new(Located::new(input));
-        Self::translation_unit.parse(input)
+        Self::translation_unit
+            .parse(input)
+            .map_err(|e| WgslParseError {
+                message: todo!("e.to_string() needs to be implemented"),
+                position: e.offset(),
+                context: e.into_inner(),
+            })
     }
 
-    pub fn translation_unit(input: &mut Input<'_>) -> PResult<()> {
+    pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
         // TODO: Add import statement here
         let _directives = Self::global_directives.parse_next(input)?;
         let declarations = Self::global_decls.parse_next(input)?;
@@ -45,11 +49,11 @@ impl WgslParser {
 
     /// We don't verify the global_directives rules.
     /// Instead we just trust the shader author to have specified all the important ones in the main file.
-    pub fn global_directives(input: &mut Input<'_>) -> PResult<()> {
+    pub fn global_directives(input: &mut Input<'_>) -> PResult<Ast> {
         repeat(0.., preceded(opt_spaces, Self::global_directive)).parse_next(input)
     }
 
-    pub fn global_directive(input: &mut Input<'_>) -> PResult<()> {
+    pub fn global_directive(input: &mut Input<'_>) -> PResult<Ast> {
         let _start = alt(("diagnostic", "enable", "requires")).parse_next(input)?;
         let _rule = repeat(1.., alt((spaces.void(), none_of(';').void()))).parse_next(input)?;
         let _end = ';'.parse_next(input)?;
@@ -385,76 +389,6 @@ impl WgslParser {
         .parse_next(input)
     }
 
-    /// Combination of hex_int_literal and hex_float_literal
-    pub fn hex_literal(input: &mut Input<'_>) -> PResult<()> {
-        let _prefix = cut_err(('0', one_of(['x', 'X']))).parse_next(input)?;
-        let start = opt(hex_digit1).parse_next(input)?;
-
-        fn float_postfix(input: &mut Input<'_>) -> PResult<()> {
-            (
-                one_of(['p', 'P']),
-                opt(one_of(['+', '-'])),
-                digit1,
-                opt(one_of(['f', 'h'])),
-            )
-                .void()
-                .parse_next(input)
-        }
-
-        if start.is_none() {
-            return ('.', digit1, opt(float_postfix)).void().parse_next(input);
-        }
-
-        alt((
-            one_of(['i', 'u']).void(),
-            float_postfix.void(),
-            ('.', digit0, opt(float_postfix)).void(),
-            empty,
-        ))
-        .parse_next(input)
-    }
-
-    /// Combination of decimal_float_literal and decimal_int_literal
-    pub fn decimal_literal(input: &mut Input<'_>) -> PResult<()> {
-        fn e_part(input: &mut Input<'_>) -> PResult<()> {
-            (one_of(['e', 'E']), opt(one_of(['+', '-'])), digit1)
-                .void()
-                .parse_next(input)
-        }
-        fn fh(input: &mut Input<'_>) -> PResult<()> {
-            one_of(['f', 'h']).void().parse_next(input)
-        }
-
-        alt((
-            (cut_err("00"), digit0, '.', digit0, opt(e_part), opt(fh)).void(),
-            ('.', digit1, opt(e_part), opt(fh)).void(),
-            (
-                digit1,
-                alt((
-                    ('.', digit0, opt(e_part), opt(fh)).void(),
-                    (e_part, opt(fh)).void(),
-                    fh.void(),
-                    (one_of(['i', 'u'])).void(), // Integer
-                    empty,                       // Fall back to integer
-                )),
-            )
-                .void(),
-        ))
-        .parse_next(input)
-    }
-
-    pub fn _int_literal(input: &mut Input<'_>) -> PResult<()> {
-        (
-            alt((
-                ("0", one_of(['x', 'X']), hex_digit1).void(),
-                digit1.verify(|v: &str| !v.starts_with("00")).void(),
-            )),
-            opt(one_of(['i', 'u'])),
-        )
-            .void()
-            .parse_next(input)
-    }
-
     pub fn component_or_swizzle_specifier(input: &mut Input<'_>) -> PResult<GlobalItems> {
         alt((
             (
@@ -475,29 +409,6 @@ impl WgslParser {
                 opt(Self::component_or_swizzle_specifier),
             )
             .map(|(a, b)| a.join(b)),
-        ))
-        .parse_next(input)
-    }
-
-    pub fn ident<'input>(input: &mut Input<'input>) -> PResult<GlobalItem> {
-        Self::ident_pattern_token
-            .span()
-            .map(|s| GlobalItem(s))
-            .parse_next(input)
-    }
-
-    pub fn ident_pattern_token<'input>(input: &mut Input<'input>) -> PResult<&'input str> {
-        alt((
-            (
-                cut_err('_'),
-                cut_err(take_while(1.., |c: char| unicode_ident::is_xid_continue(c))),
-            )
-                .recognize(),
-            (
-                cut_err(one_of(|c: char| unicode_ident::is_xid_start(c))),
-                cut_err(take_while(0.., |c: char| unicode_ident::is_xid_continue(c))),
-            )
-                .recognize(),
         ))
         .parse_next(input)
     }
