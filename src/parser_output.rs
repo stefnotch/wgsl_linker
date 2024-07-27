@@ -1,5 +1,7 @@
+#[derive(Debug)]
 pub struct Variable(pub (usize, usize));
 
+#[derive(Debug)]
 pub enum AstNode {
     Declare(Variable),
     Use(Variable),
@@ -7,7 +9,7 @@ pub enum AstNode {
     CloseBlock,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Ast(pub Vec<AstNode>);
 impl Ast {
     pub fn new() -> Self {

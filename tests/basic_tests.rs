@@ -1,4 +1,4 @@
-use wgsl_linker_reference::parser::WgslParser;
+use wgsl_linker_reference::{parse, tokenizer::Tokenizer};
 
 #[test]
 fn global_directive() {
@@ -10,7 +10,7 @@ requires readonly_and_readwrite_storage_textures,/*a*/packed_4x8_integer_dot_pro
         return f32(bind::arr[0]);
     }"*/
 
-    assert!(WgslParser::parse(source).is_ok());
+    assert!(parse(source).is_ok());
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn main() -> f32 {
         return f32(bind::arr[0]);
     }";
 
-    assert!(WgslParser::parse(source).is_ok());
+    assert!(parse(source).is_ok());
 }
 
 #[test]
@@ -33,5 +33,5 @@ fn attribute_bindings() {
 @group(1) @binding(0) var baseColorSampler : sampler;
 @group(1) @binding(1) var baseColorTexture : texture_2d<f32>;";
 
-    assert!(WgslParser::parse(source).is_ok());
+    assert!(parse(source).is_ok());
 }

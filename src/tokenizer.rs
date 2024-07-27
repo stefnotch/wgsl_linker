@@ -2,10 +2,10 @@ use std::ops::Range;
 
 use winnow::{
     ascii::{digit0, digit1, hex_digit1},
-    combinator::{alt, cut_err, empty, eof, opt, repeat},
+    combinator::{alt, cut_err, dispatch, empty, eof, fail, opt, peek, repeat, terminated, trace},
     error::ContextError,
     stream::Recoverable,
-    token::{one_of, take_till, take_while},
+    token::{any, one_of, take_till, take_while},
     Located, PResult, Parser,
 };
 
@@ -106,7 +106,8 @@ pub struct Tokenizer;
 impl Tokenizer {
     pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, WgslParseError> {
         let input = TokenizerInput::new(Located::new(input));
-        Self::tokens.parse(input).map_err(|e| WgslParseError {
+        let result = trace("tokenization", Self::tokens).parse(input);
+        result.map_err(|e| WgslParseError {
             message: e.to_string(),
             position: e.offset(),
             context: e.into_inner(),
@@ -114,8 +115,8 @@ impl Tokenizer {
     }
 
     pub fn tokens<'a>(input: &mut TokenizerInput<'a>) -> PResult<Vec<SpannedToken<'a>>> {
-        repeat(0.., Self::token)
-            .fold(
+        terminated(
+            repeat(0.., Self::token_fast).fold(
                 || Vec::new(),
                 |mut acc, token| {
                     match token {
@@ -124,18 +125,35 @@ impl Tokenizer {
                     }
                     acc
                 },
-            )
-            .parse_next(input)
+            ),
+            cut_err(eof),
+        )
+        .parse_next(input)
     }
 
-    pub fn token<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<SpannedToken<'a>>> {
-        alt((
-            Self::trivia.map(|_| None),
-            Self::number.map(Some),
-            Self::word.map(Some),
-            Self::symbol.map(Some),
-            Self::paren.map(Some),
-        ))
+    pub fn token_fast<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<SpannedToken<'a>>> {
+        dispatch! {peek(any);
+            '_' => Self::word.map(Some),
+            c if unicode_ident::is_xid_start(c) => Self::word.map(Some),
+            '0' => dispatch! {peek((any, any)).map(|(_, b)| b);
+                'x' | 'X' => Self::hex_literal.map(Some),
+                _ => Self::decimal_literal.map(Some),
+            },
+            c if c.is_ascii_digit() => Self::decimal_literal.map(Some),
+            '.' => dispatch! {peek((any, any)).map(|(_, b): (char, char)| b);
+                c if c.is_ascii_digit() => Self::decimal_literal.map(Some),
+                _ => Self::symbol.map(Some),
+            },
+            c if c.is_whitespace() => take_while(1.., |c: char| c.is_whitespace()).map(|_| None),
+            '/' => dispatch! {peek((any, any)).map(|(_, b)| b);
+                '/' => Self::single_line_comment.map(|_| None),
+                '*' => Self::multi_line_comment.map(|_| None),
+                _ => Self::symbol.map(Some),
+            },
+            '(' | ')' | '[' | ']' | '{' | '}' => Self::paren.map(Some),
+            ':' | ';' | ',' |  '@' | '<' | '>' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => Self::symbol.map(Some),
+            _ => fail
+        }
         .parse_next(input)
     }
 
@@ -157,21 +175,6 @@ impl Tokenizer {
             .with_span()
             .map(|(v, span)| (Token::Paren(v), span).into())
             .parse_next(input)
-    }
-
-    /// Parses at least one whitespace or comment.
-    pub fn trivia<'a>(input: &mut TokenizerInput<'a>) -> PResult<()> {
-        repeat(
-            1..,
-            alt((
-                take_while(1.., |c: char| c.is_whitespace()).void(),
-                Self::single_line_comment.void(),
-                Self::multi_line_comment.void(),
-            )),
-        )
-        .fold(|| (), |acc, _| acc)
-        .void()
-        .parse_next(input)
     }
 
     fn single_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
@@ -224,31 +227,17 @@ impl Tokenizer {
     }
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {
-        alt((
-            (
-                cut_err('_'),
-                cut_err(take_while(1.., |c: char| unicode_ident::is_xid_continue(c))),
-            )
-                .recognize(),
-            (
-                cut_err(one_of(|c: char| unicode_ident::is_xid_start(c))),
-                cut_err(take_while(0.., |c: char| unicode_ident::is_xid_continue(c))),
-            )
-                .recognize(),
-        ))
+        dispatch! {any;
+            '_' => cut_err(take_while(1.., |c: char| unicode_ident::is_xid_continue(c))),
+            c if unicode_ident::is_xid_start(c) => cut_err(take_while(0.., |c: char| unicode_ident::is_xid_continue(c))),
+            _ => fail
+        }
         .parse_next(input)
     }
 
-    pub fn number<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
-        alt((Self::hex_literal, Self::decimal_literal))
-            .span()
-            .map(|span| (Token::Number, span).into())
-            .parse_next(input)
-    }
-
     /// Combination of hex_int_literal and hex_float_literal
-    pub fn hex_literal(input: &mut TokenizerInput<'_>) -> PResult<()> {
-        let _prefix = cut_err(('0', one_of(['x', 'X']))).parse_next(input)?;
+    pub fn hex_literal<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+        let _prefix = ('0', one_of(['x', 'X'])).parse_next(input)?;
         let start = opt(hex_digit1).parse_next(input)?;
 
         fn float_postfix(input: &mut TokenizerInput<'_>) -> PResult<()> {
@@ -263,7 +252,10 @@ impl Tokenizer {
         }
 
         if start.is_none() {
-            return ('.', digit1, opt(float_postfix)).void().parse_next(input);
+            return ('.', digit1, opt(float_postfix))
+                .span()
+                .map(|span| (Token::Number, span).into())
+                .parse_next(input);
         }
 
         alt((
@@ -272,11 +264,13 @@ impl Tokenizer {
             ('.', digit0, opt(float_postfix)).void(),
             empty,
         ))
+        .span()
+        .map(|span| (Token::Number, span).into())
         .parse_next(input)
     }
 
     /// Combination of decimal_float_literal and decimal_int_literal
-    pub fn decimal_literal(input: &mut TokenizerInput<'_>) -> PResult<()> {
+    pub fn decimal_literal<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
         fn e_part(input: &mut TokenizerInput<'_>) -> PResult<()> {
             (one_of(['e', 'E']), opt(one_of(['+', '-'])), digit1)
                 .void()
@@ -287,7 +281,7 @@ impl Tokenizer {
         }
 
         alt((
-            (cut_err("00"), digit0, '.', digit0, opt(e_part), opt(fh)).void(),
+            ("00", cut_err(digit0), '.', digit0, opt(e_part), opt(fh)).void(),
             ('.', digit1, opt(e_part), opt(fh)).void(),
             (
                 digit1,
@@ -301,18 +295,8 @@ impl Tokenizer {
             )
                 .void(),
         ))
+        .span()
+        .map(|span| (Token::Number, span).into())
         .parse_next(input)
-    }
-
-    pub fn _int_literal(input: &mut TokenizerInput<'_>) -> PResult<()> {
-        (
-            alt((
-                ("0", one_of(['x', 'X']), hex_digit1).void(),
-                digit1.verify(|v: &str| !v.starts_with("00")).void(),
-            )),
-            opt(one_of(['i', 'u'])),
-        )
-            .void()
-            .parse_next(input)
     }
 }

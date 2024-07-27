@@ -1,7 +1,5 @@
 use winnow::{
-    combinator::{
-        alt, cut_err, delimited, fail, opt, preceded, repeat, separated, seq, terminated,
-    },
+    combinator::{alt, delimited, fail, opt, preceded, repeat, separated, seq, terminated},
     error::ContextError,
     stream::Recoverable,
     token::one_of,
@@ -72,7 +70,7 @@ impl WgslParser {
 
     pub fn global_decl(input: &mut Input<'_>) -> PResult<Ast> {
         if let Some(non_attributed_global) = opt(alt((
-            cut_err(symbol(';')).default_value::<Ast>(),
+            symbol(';').default_value::<Ast>(),
             Self::global_alias,
             Self::global_const_assert,
             Self::global_struct,
@@ -91,14 +89,14 @@ impl WgslParser {
     }
 
     fn attributes(input: &mut Input<'_>) -> PResult<Ast> {
-        repeat(0.., cut_err(Self::attribute))
+        repeat(0.., Self::attribute)
             .map(|v: Vec<_>| v.into_iter().collect())
             .parse_next(input)
     }
 
     fn global_alias(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            _: cut_err(word("alias")),
+            _: word("alias"),
             Self::ident,
             _: symbol('='),
             Self::type_specifier,
@@ -110,7 +108,7 @@ impl WgslParser {
 
     fn global_const_assert(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            _: cut_err(word("const_assert")),
+            _: word("const_assert"),
             Self::expression,
             _: symbol(';'),
         )
@@ -120,7 +118,7 @@ impl WgslParser {
 
     fn global_struct(input: &mut Input<'_>) -> PResult<Ast> {
         (
-            cut_err(word("struct")),
+            word("struct"),
             Self::ident,
             paren('{'),
             repeat(
@@ -140,7 +138,7 @@ impl WgslParser {
     }
 
     fn global_fn(input: &mut Input<'_>) -> PResult<Ast> {
-        let _ = cut_err(word("fn")).parse_next(input)?;
+        let _ = word("fn").parse_next(input)?;
         let name = Self::ident.parse_next(input)?;
         let _ = paren('(').parse_next(input)?;
         let params = separated(0.., Self::fn_param, symbol(','))
@@ -181,7 +179,7 @@ impl WgslParser {
     fn global_var(input: &mut Input<'_>) -> PResult<Ast> {
         // Things like var<private> d: f32;
         seq!(
-            _: cut_err(word("var")),
+            _: word("var"),
             _: Self::maybe_template_args,
             Self::declare_typed_ident,
             opt(preceded(
@@ -195,7 +193,7 @@ impl WgslParser {
     }
     fn global_override(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            _: cut_err(word("override")),
+            _: word("override"),
             Self::declare_typed_ident,
             opt(preceded(
                 symbol( '='),
@@ -207,7 +205,7 @@ impl WgslParser {
     }
     fn global_const(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            _:cut_err(word("const")),
+            _:word("const"),
             Self::declare_typed_ident,
             _: symbol('='),
             Self::expression,
@@ -259,7 +257,7 @@ impl WgslParser {
 
     pub fn argument_expression_list(input: &mut Input<'_>) -> PResult<Ast> {
         delimited(
-            cut_err(paren('(')),
+            paren('('),
             Self::expression_comma_list.map(|v| v.into_iter().collect()),
             paren(')'),
         )
@@ -323,13 +321,13 @@ impl WgslParser {
     pub fn unary_expression(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
             preceded(
-                cut_err(one_of([
+                one_of([
                     Token::Symbol('!'),
                     Token::Symbol('&'),
                     Token::Symbol('*'),
                     Token::Symbol('-'),
                     Token::Symbol('~'),
-                ])),
+                ]),
                 Self::unary_expression,
             ),
             (
@@ -342,9 +340,7 @@ impl WgslParser {
     }
 
     pub fn primary_expression(input: &mut Input<'_>) -> PResult<Ast> {
-        if let Some((ident, tokens)) =
-            opt(cut_err(Self::ident).with_recognized()).parse_next(input)?
-        {
+        if let Some((ident, tokens)) = opt(Self::ident.with_recognized()).parse_next(input)? {
             if tokens.len() == 1
                 && (tokens[0].token == Token::Word("true")
                     || tokens[0].token == Token::Word("false"))
@@ -360,7 +356,7 @@ impl WgslParser {
         } else {
             alt((
                 Self::literal.default_value::<Ast>(),
-                delimited(cut_err(paren('(')), Self::expression, paren(')')),
+                delimited(paren('('), Self::expression, paren(')')),
             ))
             .parse_next(input)
         }
@@ -387,13 +383,13 @@ impl WgslParser {
     pub fn component_or_swizzle_specifier(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
             (
-                cut_err(symbol('.')),
+                symbol('.'),
                 Self::ident_pattern_token,
                 opt(Self::component_or_swizzle_specifier),
             )
                 .default_value::<Ast>(),
             seq!(
-                _:cut_err(symbol('[')),
+                _:symbol('['),
                 Self::expression,
                 _:symbol(']'),
                 opt(Self::component_or_swizzle_specifier),

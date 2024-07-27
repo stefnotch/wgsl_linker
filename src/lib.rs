@@ -5,6 +5,7 @@ pub mod parser_output;
 pub mod tokenizer;
 
 // TODO: Get rid of the 'b lifetime
+#[derive(Debug)]
 pub struct WgslParseError {
     pub message: String,
     pub position: usize,
