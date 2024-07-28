@@ -1,7 +1,7 @@
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable(pub (usize, usize));
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstNode {
     Declare(Variable),
     Use(Variable),
@@ -9,7 +9,7 @@ pub enum AstNode {
     CloseBlock,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub struct Ast(pub Vec<AstNode>);
 impl Ast {
     pub fn new() -> Self {

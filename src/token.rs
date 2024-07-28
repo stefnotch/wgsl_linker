@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{fmt, ops::Range};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Token<'a> {
@@ -8,7 +8,13 @@ pub enum Token<'a> {
     Word(&'a str),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+impl fmt::Debug for SpannedToken<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.token)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct SpannedToken<'a> {
     pub token: Token<'a>,
     pub span: (usize, usize),

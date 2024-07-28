@@ -1,10 +1,10 @@
 use winnow::{
     combinator::{
-        alt, cut_err, delimited, fail, opt, preceded, repeat, separated, seq, terminated,
+        alt, cut_err, delimited, fail, opt, preceded, repeat, separated, seq, terminated, trace,
     },
     error::ContextError,
     stream::Recoverable,
-    token::one_of,
+    token::{any, one_of, take_till},
     PResult, Parser,
 };
 
@@ -15,8 +15,6 @@ use crate::{
 };
 
 pub type Input<'a> = Recoverable<&'a [SpannedToken<'a>], ContextError>;
-
-// TODO: Impl Location for Input https://docs.rs/winnow/latest/src/winnow/stream/mod.rs.html#1330
 
 /// A basic parser for the purposes of linking multiple WGSL modules together. It needs to parse
 /// - Identifiers in declarations
@@ -61,7 +59,7 @@ impl WgslParser {
     pub fn global_directive(input: &mut Input<'_>) -> PResult<()> {
         let _start =
             alt((word("diagnostic"), word("enable"), word("requires"))).parse_next(input)?;
-        let _rule = repeat(1.., symbol(';').void()).parse_next(input)?;
+        let _rule = cut_err(take_till(1.., Token::Symbol(';'))).parse_next(input)?;
         let _end = symbol(';').parse_next(input)?;
         Ok(())
     }
@@ -91,7 +89,7 @@ impl WgslParser {
     }
 
     fn attributes(input: &mut Input<'_>) -> PResult<Ast> {
-        repeat(0.., Self::attribute)
+        trace("optional attributes", repeat(0.., Self::attribute))
             .map(|v: Vec<_>| v.into_iter().collect())
             .parse_next(input)
     }
@@ -175,18 +173,18 @@ impl WgslParser {
     }
 
     fn global_var(input: &mut Input<'_>) -> PResult<Ast> {
-        // Things like var<private> d: f32;
-        seq!(
-            _: word("var"),
-            _: Self::maybe_template_args,
-            Self::declare_typed_ident,
-            opt(preceded(
-               symbol ('='),
-                Self::expression
-            )),
-            _: symbol(';'),
+        terminated(Self::var_statement, symbol(';')).parse_next(input)
+    }
+    fn var_statement(input: &mut Input<'_>) -> PResult<Ast> {
+        // Things like var<private> d: f32
+        preceded(
+            (word("var"), Self::maybe_template_args),
+            (
+                Self::declare_typed_ident,
+                opt(preceded(symbol('='), Self::expression)),
+            )
+                .map(|(a, b)| a.join(b)),
         )
-        .map(|(a, b)| a.join(b))
         .parse_next(input)
     }
     fn global_override(input: &mut Input<'_>) -> PResult<Ast> {
@@ -194,9 +192,10 @@ impl WgslParser {
             _: word("override"),
             Self::declare_typed_ident,
             opt(preceded(
-                symbol( '='),
+                symbol('='),
                 Self::expression
             )),
+            _: symbol(';')
         )
         .map(|(a, b)| a.join(b))
         .parse_next(input)
@@ -243,14 +242,14 @@ impl WgslParser {
                 (word("discard")).map(|_| Ast::default()),
                 (word("return"), opt(Self::expression)).map(|(_, a)| a.unwrap_or_default()),
             )),
-            cut_err(symbol(';')),
+            symbol(';'),
         ))
         .parse_next(input)?
         {
             return Ok(non_attributed_statement);
         }
         // Semicolon only statement
-        if let Some(_) = opt(symbol(';').void()).parse_next(input)? {
+        if (opt(symbol(';').void()).parse_next(input)?).is_some() {
             return Ok(Ast::default());
         }
 
@@ -324,7 +323,7 @@ impl WgslParser {
 
     pub fn variable_or_value_statement(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
-            Self::global_var,
+            Self::var_statement,
             (
                 word("const"),
                 Self::declare_typed_ident,
@@ -519,7 +518,7 @@ impl WgslParser {
             .parse_next(input)
         }
 
-        let next = repeat(1.., preceded(operator, Self::unary_expression))
+        let next = repeat(0.., preceded(operator, Self::unary_expression))
             .map(|v: Vec<_>| -> Ast { v.into_iter().collect() })
             .parse_next(input)?;
 
@@ -603,9 +602,9 @@ impl WgslParser {
             )
                 .default_value::<Ast>(),
             seq!(
-                _:symbol('['),
+                _:paren('['),
                 Self::expression,
-                _:symbol(']'),
+                _:paren(']'),
                 opt(Self::component_or_swizzle_specifier),
             )
             .map(|(a, b)| a.join(b)),
@@ -614,18 +613,19 @@ impl WgslParser {
     }
 
     pub fn ident(input: &mut Input<'_>) -> PResult<Variable> {
-        one_of(|v: SpannedToken<'_>| matches!(v.token, Token::Word(_)))
-            .map(|v: SpannedToken<'_>| Variable(v.span))
-            .parse_next(input)
+        any.verify_map(|v: SpannedToken<'_>| match v.token {
+            Token::Word(_) => Some(Variable(v.span)),
+            _ => None,
+        })
+        .parse_next(input)
     }
 
     pub fn ident_pattern_token<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
-        one_of(|v: SpannedToken<'a>| matches!(v.token, Token::Word(_)))
-            .map(|v: SpannedToken<'a>| match v.token {
-                Token::Word(a) => a,
-                _ => unreachable!(),
-            })
-            .parse_next(input)
+        any.verify_map(|v: SpannedToken<'a>| match v.token {
+            Token::Word(a) => Some(a),
+            _ => None,
+        })
+        .parse_next(input)
     }
 }
 
@@ -650,7 +650,7 @@ fn symbol_pair<'a>(
 fn paren<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a))
+    one_of::<Input, Token<'a>, ContextError>(Token::Paren(a))
 }
 fn number<'a>() -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError>
 {

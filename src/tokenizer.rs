@@ -30,22 +30,18 @@ impl Tokenizer {
 
     pub fn tokens<'a>(input: &mut TokenizerInput<'a>) -> PResult<Vec<SpannedToken<'a>>> {
         terminated(
-            repeat(0.., Self::token_fast).fold(
-                || Vec::new(),
-                |mut acc, token| {
-                    match token {
-                        Some(token) => acc.push(token),
-                        None => {}
-                    }
-                    acc
-                },
-            ),
+            repeat(0.., Self::token_fast.with_span()).fold(Vec::new, |mut acc, (token, span)| {
+                if let Some(token) = token {
+                    acc.push((token, span).into())
+                }
+                acc
+            }),
             cut_err(eof),
         )
         .parse_next(input)
     }
 
-    pub fn token_fast<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<SpannedToken<'a>>> {
+    pub fn token_fast<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<Token<'a>>> {
         dispatch! {peek(any);
             '_' => dispatch! {peek((any, any)).map(|(_, b)| b);
                 c if unicode_ident::is_xid_continue(c) => Self::word.map(Some),
@@ -74,7 +70,7 @@ impl Tokenizer {
         .parse_next(input)
     }
 
-    pub fn symbol<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+    pub fn symbol<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
         one_of([
             ':', ';', ',', '.', '@', '<', '>', '=', '+', '-', '*', '/', '%', '&', '|', '^', '!',
             '~', // Extra token for the _ = expr; syntax
@@ -83,23 +79,20 @@ impl Tokenizer {
             // And "quotes" for import paths.
             ':',
         ])
-        .with_span()
-        .map(|(v, span)| (Token::Paren(v), span).into())
+        .map(Token::Symbol)
         .parse_next(input)
     }
 
-    pub fn paren<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+    pub fn paren<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
         one_of(['(', ')', '[', ']', '{', '}'])
-            .with_span()
-            .map(|(v, span)| (Token::Paren(v), span).into())
+            .map(Token::Paren)
             .parse_next(input)
     }
 
     fn single_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
-        let _start = "//".parse_next(input)?;
-        let _text = take_till(0.., Self::is_newline_start).parse_next(input)?;
-        let _newline = Self::new_line.parse_next(input)?;
-        Ok(())
+        ("//", take_till(0.., Self::is_newline_start), Self::new_line)
+            .void()
+            .parse_next(input)
     }
 
     fn multi_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
@@ -107,8 +100,8 @@ impl Tokenizer {
         loop {
             if let Some(_end) = opt("*/").parse_next(input)? {
                 return Ok(());
-            } else if let Some(_) = opt(Self::multi_line_comment).parse_next(input)? {
-                // We found a nested comment, skip it
+            } else if let Some(_nested_comment) = opt(Self::multi_line_comment).parse_next(input)? {
+                // Skip nested comments
             } else {
                 // Skip any other character
                 let _ = take_till(1.., ('*', '/')).parse_next(input)?;
@@ -129,31 +122,29 @@ impl Tokenizer {
 
     fn new_line(input: &mut TokenizerInput<'_>) -> PResult<()> {
         alt((
-            "\u{000D}\u{000A}".map(|_| ()),
-            one_of(Self::is_newline_start).map(|_| ()),
-            eof.map(|_| ()),
+            "\u{000D}\u{000A}".void(),
+            one_of(Self::is_newline_start).void(),
+            eof.void(),
         ))
         .parse_next(input)
     }
 
-    pub fn word<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
-        Self::ident_pattern_token
-            .with_span()
-            .map(|(v, span)| (Token::Word(v), span).into())
-            .parse_next(input)
+    pub fn word<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
+        Self::ident_pattern_token.map(Token::Word).parse_next(input)
     }
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {
         dispatch! {any;
-            '_' => cut_err(take_while(1.., |c: char| unicode_ident::is_xid_continue(c))),
-            c if unicode_ident::is_xid_start(c) => cut_err(take_while(0.., |c: char| unicode_ident::is_xid_continue(c))),
+            '_' => cut_err(take_while(1.., unicode_ident::is_xid_continue)),
+            c if unicode_ident::is_xid_start(c) => cut_err(take_while(0.., unicode_ident::is_xid_continue)),
             _ => fail
         }
+        .recognize()
         .parse_next(input)
     }
 
     /// Combination of hex_int_literal and hex_float_literal
-    pub fn hex_literal<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+    pub fn hex_literal<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
         let _prefix = ('0', one_of(['x', 'X'])).parse_next(input)?;
         let start = opt(hex_digit1).parse_next(input)?;
 
@@ -170,8 +161,7 @@ impl Tokenizer {
 
         if start.is_none() {
             return ('.', digit1, opt(float_postfix))
-                .span()
-                .map(|span| (Token::Number, span).into())
+                .map(|_| Token::Number)
                 .parse_next(input);
         }
 
@@ -181,13 +171,12 @@ impl Tokenizer {
             ('.', digit0, opt(float_postfix)).void(),
             empty,
         ))
-        .span()
-        .map(|span| (Token::Number, span).into())
+        .map(|_| Token::Number)
         .parse_next(input)
     }
 
     /// Combination of decimal_float_literal and decimal_int_literal
-    pub fn decimal_literal<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
+    pub fn decimal_literal<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
         fn e_part(input: &mut TokenizerInput<'_>) -> PResult<()> {
             (one_of(['e', 'E']), opt(one_of(['+', '-'])), digit1)
                 .void()
@@ -212,8 +201,7 @@ impl Tokenizer {
             )
                 .void(),
         ))
-        .span()
-        .map(|span| (Token::Number, span).into())
+        .map(|_| Token::Number)
         .parse_next(input)
     }
 }
