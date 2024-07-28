@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use winnow::{
     ascii::{digit0, digit1, hex_digit1},
     combinator::{alt, cut_err, dispatch, empty, eof, fail, opt, peek, repeat, terminated, trace},
@@ -9,96 +7,12 @@ use winnow::{
     Located, PResult, Parser,
 };
 
-use crate::WgslParseError;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Token<'a> {
-    Symbol(char),
-    Paren(char),
-    Number,
-    Word(&'a str),
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SpannedToken<'a> {
-    pub token: Token<'a>,
-    pub span: (usize, usize),
-}
-impl<'a> From<(Token<'a>, Range<usize>)> for SpannedToken<'a> {
-    fn from((token, span): (Token<'a>, Range<usize>)) -> Self {
-        Self {
-            token,
-            span: (span.start, span.end),
-        }
-    }
-}
+use crate::{
+    token::{SpannedToken, Token},
+    WgslParseError,
+};
 
 pub type TokenizerInput<'a> = Recoverable<Located<&'a str>, ContextError>;
-
-// We implement ContainsToken so that we can match against tokens in the parser.
-// (https://docs.rs/winnow/latest/winnow/_topic/stream/index.html)
-
-impl<'a> winnow::stream::ContainsToken<SpannedToken<'a>> for SpannedToken<'a> {
-    #[inline(always)]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        *self == token
-    }
-}
-
-impl<'a> winnow::stream::ContainsToken<SpannedToken<'a>> for &'_ [SpannedToken<'a>] {
-    #[inline]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        self.iter().any(|t| *t == token)
-    }
-}
-
-impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>>
-    for &'_ [SpannedToken<'a>; LEN]
-{
-    #[inline]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        self.iter().any(|t| *t == token)
-    }
-}
-
-impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>>
-    for [SpannedToken<'a>; LEN]
-{
-    #[inline]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        self.iter().any(|t| *t == token)
-    }
-}
-
-impl<'a> winnow::stream::ContainsToken<SpannedToken<'a>> for Token<'a> {
-    #[inline(always)]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        *self == token.token
-    }
-}
-
-impl<'a> winnow::stream::ContainsToken<SpannedToken<'a>> for &'_ [Token<'a>] {
-    #[inline]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        self.iter().any(|t| *t == token.token)
-    }
-}
-
-impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>>
-    for &'_ [Token<'a>; LEN]
-{
-    #[inline]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        self.iter().any(|t| *t == token.token)
-    }
-}
-
-impl<'a, const LEN: usize> winnow::stream::ContainsToken<SpannedToken<'a>> for [Token<'a>; LEN] {
-    #[inline]
-    fn contains_token(&self, token: SpannedToken<'a>) -> bool {
-        self.iter().any(|t| *t == token.token)
-    }
-}
 
 pub struct Tokenizer;
 
@@ -133,7 +47,10 @@ impl Tokenizer {
 
     pub fn token_fast<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<SpannedToken<'a>>> {
         dispatch! {peek(any);
-            '_' => Self::word.map(Some),
+            '_' => dispatch! {peek((any, any)).map(|(_, b)| b);
+                c if unicode_ident::is_xid_continue(c) => Self::word.map(Some),
+                _ => Self::symbol.map(Some),
+            },
             c if unicode_ident::is_xid_start(c) => Self::word.map(Some),
             '0' => dispatch! {peek((any, any)).map(|(_, b)| b);
                 'x' | 'X' => Self::hex_literal.map(Some),
@@ -160,7 +77,8 @@ impl Tokenizer {
     pub fn symbol<'a>(input: &mut TokenizerInput<'a>) -> PResult<SpannedToken<'a>> {
         one_of([
             ':', ';', ',', '.', '@', '<', '>', '=', '+', '-', '*', '/', '%', '&', '|', '^', '!',
-            '~',
+            '~', // Extra token for the _ = expr; syntax
+            '_',
             // For the linker. Maybe we also need to support `#` for preprocessor directives.
             // And "quotes" for import paths.
             ':',
@@ -193,7 +111,6 @@ impl Tokenizer {
                 // We found a nested comment, skip it
             } else {
                 // Skip any other character
-                // TODO: Eof error recovery
                 let _ = take_till(1.., ('*', '/')).parse_next(input)?;
             }
         }

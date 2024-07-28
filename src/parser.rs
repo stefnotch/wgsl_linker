@@ -1,18 +1,20 @@
 use winnow::{
-    combinator::{alt, delimited, fail, opt, preceded, repeat, separated, seq, terminated},
+    combinator::{
+        alt, cut_err, delimited, fail, opt, preceded, repeat, separated, seq, terminated,
+    },
     error::ContextError,
     stream::Recoverable,
     token::one_of,
-    Located, PResult, Parser,
+    PResult, Parser,
 };
 
 use crate::{
     parser_output::{Ast, AstNode, Variable},
-    tokenizer::{SpannedToken, Token},
+    token::{SpannedToken, Token},
     WgslParseError,
 };
 
-pub type Input<'a> = Recoverable<Located<&'a [SpannedToken<'a>]>, ContextError>;
+pub type Input<'a> = Recoverable<&'a [SpannedToken<'a>], ContextError>;
 
 // TODO: Impl Location for Input https://docs.rs/winnow/latest/src/winnow/stream/mod.rs.html#1330
 
@@ -32,11 +34,11 @@ pub struct WgslParser;
 
 impl WgslParser {
     pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, WgslParseError> {
-        let input = Recoverable::new(Located::new(input));
+        let input = Recoverable::new(input);
         Self::translation_unit
             .parse(input)
             .map_err(|e| WgslParseError {
-                message: todo!("e.to_string() needs to be implemented"),
+                message: format!("{:?}", e),
                 position: e.offset(),
                 context: e.into_inner(),
             })
@@ -152,16 +154,12 @@ impl WgslParser {
         )
             .map(|(_, a, b)| a.join(b)))
         .parse_next(input)?;
-        let body_attributes = Self::attributes.parse_next(input)?;
-        let _ = paren('{').parse_next(input)?;
-        let body = Self::statements.parse_next(input)?;
-        let _ = paren('}').parse_next(input)?;
+        let body = Self::compound_statement.parse_next(input)?;
 
         Ok(Ast::single(AstNode::Declare(name))
             .join(Ast::single(AstNode::OpenBlock))
             .join(params)
             .join(return_type)
-            .join(body_attributes)
             .join(body)
             .join(Ast::single(AstNode::CloseBlock)))
     }
@@ -220,10 +218,222 @@ impl WgslParser {
             .map(|v: Vec<_>| v.into_iter().collect())
             .parse_next(input)
     }
-    pub fn statement(input: &mut Input<'_>) -> PResult<Ast> {
-        todo!()
+
+    pub fn compound_statement(input: &mut Input<'_>) -> PResult<Ast> {
+        (Self::attributes, paren('{'), Self::statements, paren('}'))
+            .map(|(a, _, b, _)| a.join(b))
+            .parse_next(input)
     }
 
+    pub fn statement(input: &mut Input<'_>) -> PResult<Ast> {
+        if let Some(non_attributed_statement) = opt(terminated(
+            alt((
+                (
+                    Self::ident,
+                    // At this point, the ambiguity between this and variable_updating_statement is resolved
+                    opt(Self::template_args),
+                    Self::argument_expression_list,
+                )
+                    .map(|(a, b, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                Self::variable_or_value_statement,
+                Self::variable_updating_statement,
+                (word("break")).map(|_| Ast::default()),
+                (word("continue")).map(|_| Ast::default()),
+                (word("const_assert"), Self::expression).map(|(_, a)| a),
+                (word("discard")).map(|_| Ast::default()),
+                (word("return"), opt(Self::expression)).map(|(_, a)| a.unwrap_or_default()),
+            )),
+            cut_err(symbol(';')),
+        ))
+        .parse_next(input)?
+        {
+            return Ok(non_attributed_statement);
+        }
+        // Semicolon only statement
+        if let Some(_) = opt(symbol(';').void()).parse_next(input)? {
+            return Ok(Ast::default());
+        }
+
+        let attributes = Self::attributes.parse_next(input)?;
+        let statement = alt((
+            seq!(
+                _: word("for"),
+                _: paren('('),
+                opt(Self::for_init),
+                _: symbol(';'),
+                opt(Self::expression),
+                _: symbol(';'),
+                opt(Self::for_update),
+                _: paren(')'),
+                Self::compound_statement,
+            )
+            .map(|(a, b, c, d)| a.unwrap_or_default().join(b).join(c).join(d)),
+            (
+                word("if"),
+                Self::expression,
+                Self::compound_statement,
+                repeat(
+                    0..,
+                    preceded(
+                        (word("else"), word("if")),
+                        (Self::expression, Self::compound_statement),
+                    )
+                    .map(|(a, b)| a.join(b)),
+                )
+                .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+                opt(preceded(word("else"), Self::compound_statement)),
+            )
+                .map(|(_, a, b, c, d)| a.join(b).join(c).join(d)),
+            (
+                word("loop"),
+                Self::attributes,
+                paren('{'),
+                Self::statements,
+                opt((
+                    word("continuing"),
+                    Self::attributes,
+                    paren('{'),
+                    Self::statements,
+                    opt(delimited(
+                        (word("break"), word("if")),
+                        Self::expression,
+                        symbol(';'),
+                    )),
+                    paren('}'),
+                )
+                    .map(|(_, a, _, b, c, _)| a.join(b).join(c))),
+                paren('}'),
+            )
+                .map(|(_, a, _, b, c, _)| a.join(b).join(c)),
+            (
+                word("switch"),
+                Self::expression,
+                Self::attributes,
+                paren('{'),
+                repeat(0.., Self::switch_clause).map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+                paren('}'),
+            )
+                .map(|(_, a, b, _, c, _)| a.join(b).join(c)),
+            (word("while"), Self::expression, Self::compound_statement).map(|(_, a, b)| a.join(b)),
+            Self::compound_statement,
+        ))
+        .parse_next(input)?;
+
+        Ok(attributes.join(statement))
+    }
+
+    pub fn variable_or_value_statement(input: &mut Input<'_>) -> PResult<Ast> {
+        alt((
+            Self::global_var,
+            (
+                word("const"),
+                Self::declare_typed_ident,
+                symbol('='),
+                Self::expression,
+            )
+                .map(|(_, a, _, b)| a.join(b)),
+            (
+                word("let"),
+                Self::declare_typed_ident,
+                symbol('='),
+                Self::expression,
+            )
+                .map(|(_, a, _, b)| a.join(b)),
+        ))
+        .parse_next(input)
+    }
+    pub fn variable_updating_statement(input: &mut Input<'_>) -> PResult<Ast> {
+        alt((
+            (
+                Self::lhs_expression,
+                alt((
+                    preceded(symbol('='), Self::expression),
+                    preceded((symbol('<'), symbol('<'), symbol('=')), Self::expression),
+                    preceded((symbol('>'), symbol('>'), symbol('=')), Self::expression),
+                    preceded((symbol('%'), symbol('=')), Self::expression),
+                    preceded((symbol('&'), symbol('=')), Self::expression),
+                    preceded((symbol('*'), symbol('=')), Self::expression),
+                    preceded((symbol('+'), symbol('=')), Self::expression),
+                    preceded((symbol('-'), symbol('=')), Self::expression),
+                    preceded((symbol('/'), symbol('=')), Self::expression),
+                    preceded((symbol('^'), symbol('=')), Self::expression),
+                    preceded((symbol('|'), symbol('=')), Self::expression),
+                    (symbol('+'), symbol('+')).default_value(),
+                    (symbol('-'), symbol('-')).default_value(),
+                )),
+            )
+                .map(|(a, b)| a.join(b)),
+            preceded((symbol('_'), symbol('=')), Self::expression),
+        ))
+        .parse_next(input)
+    }
+
+    pub fn lhs_expression(input: &mut Input<'_>) -> PResult<Ast> {
+        alt((
+            (Self::ident, opt(Self::component_or_swizzle_specifier))
+                .map(|(a, b)| Ast::single(AstNode::Use(a)).join(b)),
+            (
+                delimited(paren('('), Self::lhs_expression, paren(')')),
+                opt(Self::component_or_swizzle_specifier),
+            )
+                .map(|(a, b)| a.join(b)),
+            preceded(symbol('&'), Self::lhs_expression),
+            preceded(symbol('*'), Self::lhs_expression),
+        ))
+        .parse_next(input)
+    }
+
+    pub fn for_init(input: &mut Input<'_>) -> PResult<Ast> {
+        alt((
+            // TODO: Ambiguity between this and the Self::global_var branch of variable_or_value_statement
+            (
+                Self::ident,
+                opt(Self::template_args),
+                Self::argument_expression_list,
+            )
+                .map(|(a, b, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+            Self::variable_or_value_statement,
+            Self::variable_updating_statement,
+        ))
+        .parse_next(input)
+    }
+
+    pub fn for_update(input: &mut Input<'_>) -> PResult<Ast> {
+        alt((
+            (
+                Self::ident,
+                opt(Self::template_args),
+                Self::argument_expression_list,
+            )
+                .map(|(a, b, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+            Self::variable_updating_statement,
+        ))
+        .parse_next(input)
+    }
+
+    pub fn switch_clause(input: &mut Input<'_>) -> PResult<Ast> {
+        let case_start = alt((
+            preceded(
+                word("case"),
+                (
+                    separated(
+                        1..,
+                        alt((word("default").default_value::<Ast>(), Self::expression)),
+                        symbol(','),
+                    )
+                    .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+                    opt(symbol(',')),
+                ),
+            )
+            .map(|(a, _)| a),
+            word("default").default_value::<Ast>(),
+        ))
+        .parse_next(input)?;
+        let case_body = preceded(opt(symbol(':')), Self::compound_statement).parse_next(input)?;
+        Ok(case_start.join(case_body))
+    }
+
+    /// A optionally_typed_ident that leads to a variable declaration.
     pub fn declare_typed_ident(input: &mut Input<'_>) -> PResult<Ast> {
         (
             Self::ident,
@@ -242,15 +452,13 @@ impl WgslParser {
     pub fn attribute(input: &mut Input<'_>) -> PResult<Ast> {
         let _start = symbol('@').parse_next(input)?;
         let name = Self::ident_pattern_token.parse_next(input)?;
-        let _opening = paren('(').parse_next(input)?;
-        let expressions = Self::expression_comma_list.parse_next(input)?;
-        let _closing = paren(')').parse_next(input)?;
+        let expressions = Self::argument_expression_list.parse_next(input)?;
 
         match name {
             "compute" | "const" | "fragment" | "interpolate" | "invariant" | "must_use"
             | "vertex" | "builtin" | "diagnostic" => Ok(Default::default()),
             "workgroup_size" | "align" | "binding" | "blend_src" | "group" | "id" | "location"
-            | "size" => Ok(expressions.into_iter().collect()),
+            | "size" => Ok(expressions),
             _ => fail.parse_next(input),
         }
     }
@@ -362,7 +570,7 @@ impl WgslParser {
         }
     }
 
-    /// Can either be a normal comparison, or a template. We don't know yet.
+    /// Could be a normal comparison, or a template. We don't know yet.
     pub fn maybe_template_args(input: &mut Input<'_>) -> PResult<Ast> {
         opt(delimited(
             symbol('<'),
@@ -374,6 +582,12 @@ impl WgslParser {
             None => Ast::default(),
         })
         .parse_next(input)
+    }
+
+    pub fn template_args(input: &mut Input<'_>) -> PResult<Ast> {
+        delimited(symbol('<'), Self::expression_comma_list, symbol('>'))
+            .map(|v| v.into_iter().collect())
+            .parse_next(input)
     }
 
     pub fn literal(input: &mut Input<'_>) -> PResult<()> {
@@ -418,13 +632,13 @@ impl WgslParser {
 fn word(
     a: &str,
 ) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, crate::tokenizer::Token<'_>, ContextError>(Token::Word(a))
+    one_of::<Input, Token<'_>, ContextError>(Token::Word(a))
 }
 
 fn symbol<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, crate::tokenizer::Token<'a>, ContextError>(Token::Symbol(a))
+    one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a))
 }
 
 fn symbol_pair<'a>(
@@ -436,9 +650,9 @@ fn symbol_pair<'a>(
 fn paren<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, crate::tokenizer::Token<'a>, ContextError>(Token::Symbol(a))
+    one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a))
 }
 fn number<'a>() -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError>
 {
-    one_of::<Input, crate::tokenizer::Token<'a>, ContextError>(Token::Number)
+    one_of::<Input, Token<'a>, ContextError>(Token::Number)
 }

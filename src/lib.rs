@@ -2,9 +2,9 @@
 
 pub mod parser;
 pub mod parser_output;
+pub mod token;
 pub mod tokenizer;
 
-// TODO: Get rid of the 'b lifetime
 #[derive(Debug)]
 pub struct WgslParseError {
     pub message: String,
