@@ -139,7 +139,7 @@ impl Tokenizer {
             c if unicode_ident::is_xid_start(c) => cut_err(take_while(0.., unicode_ident::is_xid_continue)),
             _ => fail
         }
-        .recognize()
+        .take()
         .parse_next(input)
     }
 
