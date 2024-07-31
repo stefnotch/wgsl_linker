@@ -2,6 +2,7 @@
 
 pub mod parser;
 pub mod parser_output;
+pub mod rewriter;
 pub mod token;
 pub mod tokenizer;
 

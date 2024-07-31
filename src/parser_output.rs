@@ -1,5 +1,11 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable(pub (usize, usize));
+impl Variable {
+    pub fn range(&self) -> std::ops::Range<usize> {
+        let (start, end) = self.0;
+        start..end
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstNode {
