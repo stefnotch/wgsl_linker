@@ -1,6 +1,6 @@
 use wgsl_linker_reference::{
     parse,
-    parser::{Input, WgslParser},
+    parser::WgslParser,
     parser_output::{Ast, AstNode, Variable},
     tokenizer::Tokenizer,
 };
@@ -59,7 +59,7 @@ fn parse_attribute() {
     let source = "@group(0)";
     let t = Tokenizer::tokenize(source).unwrap();
 
-    println!("{:?}", WgslParser::attribute(&mut Input::new(&t)).unwrap());
+    println!("{:?}", WgslParser::attribute(&mut &*t).unwrap());
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn parse_templates() {
         let t = Tokenizer::tokenize(source).unwrap();
 
         assert_eq!(
-            WgslParser::template_args(&mut Input::new(&t)).unwrap(),
+            WgslParser::template_args(&mut &*t).unwrap(),
             Ast([AstNode::Use(Variable((1, 8)))].to_vec())
         );
     }
@@ -79,15 +79,15 @@ fn parse_templates() {
         let t = Tokenizer::tokenize(source).unwrap();
 
         assert_eq!(
-            WgslParser::template_args(&mut Input::new(&t)).unwrap(),
+            WgslParser::template_args(&mut &*t).unwrap(),
             Ast([AstNode::Use(Variable((1, 4)))].to_vec())
         );
     }
 }
 
-// TODO: A test case with a cursed template
-/*
-@binding(0) @group(0) var<uniform> frame : u32;
+#[test]
+fn parse_hard_templates() {
+    let source = "@binding(0) @group(0) var<uniform> frame : u32;
 @vertex
 fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec4f {
   const pos = array<vec2f, u32(3<5) + 2>( // Cursed template
@@ -102,5 +102,11 @@ fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec
 @fragment
 fn frag_main() -> @location(0) vec4f {
   return vec4(1, sin(f32(frame) / 128), 0, 1);
+}";
+    let t = Tokenizer::tokenize(source).unwrap();
+
+    assert_eq!(
+        WgslParser::parse(&t).unwrap(),
+        Ast([AstNode::Use(Variable((1, 8)))].to_vec())
+    );
 }
- */

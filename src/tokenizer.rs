@@ -1,8 +1,7 @@
 use winnow::{
     ascii::{digit0, digit1, hex_digit1},
     combinator::{alt, cut_err, dispatch, empty, eof, fail, opt, peek, repeat, terminated, trace},
-    error::ContextError,
-    stream::Recoverable,
+    error::StrContext,
     token::{any, one_of, take_till, take_while},
     Located, PResult, Parser,
 };
@@ -12,14 +11,14 @@ use crate::{
     WgslParseError,
 };
 
-pub type TokenizerInput<'a> = Recoverable<Located<&'a str>, ContextError>;
+pub type TokenizerInput<'a> = Located<&'a str>;
 
 pub struct Tokenizer;
 
 /// Similar in purpose to https://github.com/gfx-rs/wgpu/blob/trunk/naga/src/front/wgsl/parse/lexer.rs
 impl Tokenizer {
     pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, WgslParseError> {
-        let input = TokenizerInput::new(Located::new(input));
+        let input = Located::new(input);
         let result = trace("tokenization", Self::tokens).parse(input);
         result.map_err(|e| WgslParseError {
             message: e.to_string(),
@@ -45,52 +44,38 @@ impl Tokenizer {
         dispatch! {peek(any);
             '_' => dispatch! {peek((any, any)).map(|(_, b)| b);
                 c if unicode_ident::is_xid_continue(c) => Self::word.map(Some),
-                _ => Self::symbol.map(Some),
+                // Extra token for the _ = expr; syntax
+                _ => any.map(Token::Symbol).map(Some),
             },
             c if unicode_ident::is_xid_start(c) => Self::word.map(Some),
             '0' => dispatch! {peek((any, any)).map(|(_, b)| b);
-                'x' | 'X' => Self::hex_literal.map(Some),
-                _ => Self::decimal_literal.map(Some),
+                'x' | 'X' => cut_err(Self::hex_literal).context(StrContext::Label("hexadecimal number")).map(Some),
+                _ => cut_err(Self::decimal_literal).context(StrContext::Label("number")).map(Some),
             },
-            c if c.is_ascii_digit() => Self::decimal_literal.map(Some),
+            c if c.is_ascii_digit() => cut_err(Self::decimal_literal).context(StrContext::Label("number")).map(Some),
             '.' => dispatch! {peek((any, any)).map(|(_, b): (char, char)| b);
-                c if c.is_ascii_digit() => Self::decimal_literal.map(Some),
-                _ => Self::symbol.map(Some),
+                c if c.is_ascii_digit() => cut_err(Self::decimal_literal).context(StrContext::Label("floating point number")).map(Some),
+                _ => any.map(Token::Symbol).map(Some),
             },
             c if c.is_whitespace() => take_while(1.., |c: char| c.is_whitespace()).map(|_| None),
             '/' => dispatch! {peek((any, any)).map(|(_, b)| b);
                 '/' => Self::single_line_comment.map(|_| None),
                 '*' => Self::multi_line_comment.map(|_| None),
-                _ => Self::symbol.map(Some),
+                _ => any.map(Token::Symbol).map(Some),
             },
-            '(' | ')' | '[' | ']' | '{' | '}' => Self::paren.map(Some),
-            ':' | ';' | ',' |  '@' | '<' | '>' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => Self::symbol.map(Some),
-            _ => fail
+            '(' | ')' | '[' | ']' | '{' | '}' => any.map(Token::Paren).map(Some),
+            ':' | ';' | ',' |  '@' | '<' | '>' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => any.map(Token::Symbol).map(Some),
+            _ => fail.context(StrContext::Label("expected a valid token")),
         }
         .parse_next(input)
     }
 
-    pub fn symbol<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
-        one_of([
-            ':', ';', ',', '.', '@', '<', '>', '=', '+', '-', '*', '/', '%', '&', '|', '^', '!',
-            '~', // Extra token for the _ = expr; syntax
-            '_',
-            // For the linker. Maybe we also need to support `#` for preprocessor directives.
-            // And "quotes" for import paths.
-            ':',
-        ])
-        .map(Token::Symbol)
-        .parse_next(input)
-    }
-
-    pub fn paren<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
-        one_of(['(', ')', '[', ']', '{', '}'])
-            .map(Token::Paren)
-            .parse_next(input)
-    }
-
     fn single_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
-        ("//", take_till(0.., Self::is_newline_start), Self::new_line)
+        (
+            "//",
+            cut_err((take_till(0.., Self::is_newline_start), Self::new_line))
+                .context(StrContext::Label("single line comment")),
+        )
             .void()
             .parse_next(input)
     }
@@ -104,7 +89,9 @@ impl Tokenizer {
                 // Skip nested comments
             } else {
                 // Skip any other character
-                let _ = take_till(1.., ('*', '/')).parse_next(input)?;
+                let _ = cut_err(take_till(1.., ('*', '/')))
+                    .context(StrContext::Label("multiline comment"))
+                    .parse_next(input)?;
             }
         }
     }
@@ -135,9 +122,9 @@ impl Tokenizer {
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {
         dispatch! {any;
-            '_' => cut_err(take_while(1.., unicode_ident::is_xid_continue)),
-            c if unicode_ident::is_xid_start(c) => cut_err(take_while(0.., unicode_ident::is_xid_continue)),
-            _ => fail
+            '_' => cut_err(take_while(1.., unicode_ident::is_xid_continue)).context(StrContext::Label("identifier starting with underscore")),
+            c if unicode_ident::is_xid_start(c) => take_while(0.., unicode_ident::is_xid_continue),
+            _ => cut_err(fail).context(StrContext::Label("identifier")),
         }
         .take()
         .parse_next(input)

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0"
-winnow = { version = "0.6.18", features = ["unstable-recover"] }
+winnow = { version = "0.6.18" }
 unicode-ident = "1.0"
 slotmap = "1.0"
 

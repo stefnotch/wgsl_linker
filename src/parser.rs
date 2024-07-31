@@ -4,7 +4,7 @@ use winnow::{
         seq, terminated,
     },
     error::{ContextError, ErrMode, StrContext},
-    stream::{Recoverable, Stream},
+    stream::Stream,
     token::{any, one_of, take_till},
     PResult, Parser,
 };
@@ -16,7 +16,7 @@ use crate::{
 };
 
 // winnow::error::TreeError<&'a [SpannedToken<'a>]>
-pub type Input<'a> = Recoverable<&'a [SpannedToken<'a>], ContextError>;
+pub type Input<'a> = &'a [SpannedToken<'a>];
 
 /// A basic parser for the purposes of linking multiple WGSL modules together. It needs to parse
 /// - Identifiers in declarations
@@ -53,11 +53,10 @@ enum Op {
 
 impl WgslParser {
     pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, WgslParseError> {
-        let input = Recoverable::new(input);
         Self::translation_unit
             .parse(input)
             .map_err(|e| WgslParseError {
-                message: format!("{:?} {:?}", e, e.inner().cause()),
+                message: format!("{:?}", e),
                 position: e.offset(),
                 context: e.into_inner(),
             })
@@ -65,8 +64,12 @@ impl WgslParser {
 
     pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
         // TODO: Add import statement here
-        let _directives = Self::global_directives.parse_next(input)?;
-        let declarations = Self::global_decls.parse_next(input)?;
+        let _directives = Self::global_directives
+            .context(StrContext::Label("directives"))
+            .parse_next(input)?;
+        let declarations = Self::global_decls
+            .context(StrContext::Label("global declarations"))
+            .parse_next(input)?;
 
         Ok(declarations.into_iter().collect())
     }
