@@ -1,25 +1,25 @@
 use crate::parser_output::{Ast, AstNode};
 
-pub trait Rewriter {
+pub trait Rewriter<'a> {
     /// Like a sax parser, this will be called for each node in the AST.
     fn open_block(&mut self);
     fn close_block(&mut self);
-    fn declare(&mut self, variable: &str);
+    fn declare(&mut self, variable: &'a str);
     /// To change the variable name, return a new name.
     /// To keep the variable name, return None.
-    fn use_variable(&mut self, variable: &str) -> Option<String>;
+    fn use_variable(&mut self, variable: &'a str) -> Option<String>;
 }
 
-pub trait Visitor {
+pub trait Visitor<'a> {
     /// Like a sax parser, this will be called for each node in the AST.
     fn open_block(&mut self);
     fn close_block(&mut self);
-    fn declare(&mut self, variable: &str);
-    fn use_variable(&mut self, variable: &str);
+    fn declare(&mut self, variable: &'a str);
+    fn use_variable(&mut self, variable: &'a str);
 }
 
 impl Ast {
-    pub fn visit(&self, source: &str, mut visitor: impl Visitor) {
+    pub fn visit<'a, T: Visitor<'a>>(&self, source: &'a str, visitor: &mut T) {
         for node in &self.0 {
             match node {
                 AstNode::OpenBlock => visitor.open_block(),
@@ -29,7 +29,7 @@ impl Ast {
             }
         }
     }
-    pub fn rewrite(&self, source: &str, mut visitor: impl Rewriter) -> String {
+    pub fn rewrite<'a, T: Rewriter<'a>>(&self, source: &'a str, visitor: &mut T) -> String {
         let mut result = String::new();
         let mut source_index = 0;
         for node in &self.0 {
