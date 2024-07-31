@@ -235,7 +235,12 @@ impl WgslParser {
 
     pub fn compound_statement(input: &mut Input<'_>) -> PResult<Ast> {
         (Self::attributes, parens('{', Self::statements, '}'))
-            .map(|(a, b)| a.join(b))
+            .map(|(a, b)| {
+                Ast::single(AstNode::OpenBlock)
+                    .join(a)
+                    .join(b)
+                    .join(Ast::single(AstNode::CloseBlock))
+            })
             .parse_next(input)
     }
 
@@ -281,7 +286,14 @@ impl WgslParser {
                 _: paren(')'),
                 Self::compound_statement,
             )
-            .map(|(a, b, c, d)| a.unwrap_or_default().join(b).join(c).join(d)),
+            .map(|(a, b, c, d)| {
+                Ast::single(AstNode::OpenBlock)
+                    .join(a)
+                    .join(b)
+                    .join(c)
+                    .join(d)
+                    .join(Ast::single(AstNode::CloseBlock))
+            }),
             (
                 word("if"),
                 Self::expression,
