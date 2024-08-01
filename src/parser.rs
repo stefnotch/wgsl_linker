@@ -318,11 +318,14 @@ impl WgslParser {
             alt((
                 (
                     Self::ident,
-                    // At this point, the ambiguity between this and variable_updating_statement is resolved
                     opt(Self::template_args),
-                    Self::argument_expression_list,
+                    // Ambiguity between this and variable_updating_statement needs to be resolved
+                    // before cut_err happens
+                    peek(symbol('(')),
+                    cut_err(Self::argument_expression_list)
+                        .context(StrContext::Label("function call")),
                 )
-                    .map(|(a, b, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                    .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
                 Self::variable_or_value_statement,
                 Self::variable_updating_statement,
                 (word("break")).map(|_| Ast::default()),
@@ -344,80 +347,116 @@ impl WgslParser {
 
         let attributes = Self::attributes.parse_next(input)?;
         let statement = alt((
-            seq!(
-                _: word("for"),
-                _: paren('('),
-                opt(Self::for_init),
-                _: must_symbol(';'),
-                opt(Self::expression),
-                _: must_symbol(';'),
-                opt(Self::for_update),
-                _: paren(')'),
-                Self::compound_statement,
+            preceded(
+                word("for"),
+                (
+                    cut_err(parens(
+                        '(',
+                        seq!(
+                            opt(Self::for_init),
+                            _: must_symbol(';'),
+                            opt(Self::expression),
+                            _: must_symbol(';'),
+                            opt(Self::for_update),
+                        ),
+                        ')',
+                    ))
+                    .context(StrContext::Label("for loop definition"))
+                    .map(|(a, b, c)| a.unwrap_or_default().join(b).join(c)),
+                    cut_err(Self::compound_statement).context(StrContext::Label("for loop body")),
+                ),
             )
-            .map(|(a, b, c, d)| {
+            .map(|(a, b)| {
                 Ast::single(AstNode::OpenBlock)
                     .join(a)
                     .join(b)
-                    .join(c)
-                    .join(d)
                     .join(Ast::single(AstNode::CloseBlock))
             }),
             (
                 word("if"),
-                Self::expression,
-                Self::compound_statement,
+                cut_err(Self::expression).context(StrContext::Label("if condition")),
+                cut_err(Self::compound_statement).context(StrContext::Label("if body")),
                 repeat(
                     0..,
                     preceded(
                         (word("else"), word("if")),
-                        (Self::expression, Self::compound_statement),
+                        (
+                            cut_err(Self::expression)
+                                .context(StrContext::Label("else if condition")),
+                            cut_err(Self::compound_statement)
+                                .context(StrContext::Label("else if body")),
+                        ),
                     )
                     .map(|(a, b)| a.join(b)),
                 )
                 .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
-                opt(preceded(word("else"), Self::compound_statement)),
+                opt(preceded(
+                    word("else"),
+                    cut_err(Self::compound_statement).context(StrContext::Label("else body")),
+                )),
             )
                 .map(|(_, a, b, c, d)| a.join(b).join(c).join(d)),
             (
                 word("loop"),
                 Self::attributes,
-                paren('{'),
-                Self::statements,
-                opt((
-                    word("continuing"),
-                    Self::attributes,
-                    paren('{'),
-                    Self::statements,
-                    opt(delimited(
-                        (word("break"), word("if")),
-                        Self::expression,
-                        must_symbol(';'),
-                    )),
-                    paren('}'),
-                )
-                    .map(|(_, a, _, b, c, _)| a.join(b).join(c))),
-                paren('}'),
+                cut_err(parens(
+                    '{',
+                    (Self::statements, opt(Self::loop_continuing_block)),
+                    '}',
+                ))
+                .context(StrContext::Label("loop body")),
             )
-                .map(|(_, a, _, b, c, _)| a.join(b).join(c)),
+                .map(|(_, a, (b, c))| a.join(b).join(c)),
             (
                 word("switch"),
-                Self::expression,
+                cut_err(Self::expression).context(StrContext::Label("switch expression")),
                 Self::attributes,
-                parens(
+                cut_err(parens(
                     '{',
                     repeat(0.., Self::switch_clause)
                         .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
                     '}',
-                ),
+                ))
+                .context(StrContext::Label("switch body")),
             )
                 .map(|(_, a, b, c)| a.join(b).join(c)),
-            (word("while"), Self::expression, Self::compound_statement).map(|(_, a, b)| a.join(b)),
+            (
+                word("while"),
+                cut_err(Self::expression).context(StrContext::Label("while condition")),
+                cut_err(Self::compound_statement).context(StrContext::Label("while body")),
+            )
+                .map(|(_, a, b)| a.join(b)),
             Self::compound_statement,
         ))
         .parse_next(input)?;
 
         Ok(attributes.join(statement))
+    }
+
+    fn loop_continuing_block(input: &mut Input<'_>) -> PResult<Ast> {
+        preceded(
+            word("continuing"),
+            (
+                Self::attributes,
+                cut_err(parens(
+                    '{',
+                    (
+                        Self::statements,
+                        opt(delimited(
+                            (word("break"), word("if")),
+                            cut_err(Self::expression)
+                                .context(StrContext::Label("break if condition")),
+                            must_symbol(';'),
+                        )),
+                    )
+                        .map(|(a, b)| a.join(b)),
+                    '}',
+                ))
+                .context(StrContext::Label("loop continuing block")),
+            )
+                .map(|(a, b)| a.join(b)),
+        )
+        .parse_next(input)
     }
 
     pub fn variable_or_value_statement(input: &mut Input<'_>) -> PResult<Ast> {
