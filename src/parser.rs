@@ -3,7 +3,9 @@ use winnow::{
         alt, cut_err, delimited, dispatch, empty, eof, fail, opt, peek, preceded, repeat,
         separated, seq, terminated,
     },
-    error::{ContextError, ErrMode, ParseError, StrContext, StrContextValue},
+    error::{
+        ContextError, ErrMode, ErrorKind, ParseError, ParserError, StrContext, StrContextValue,
+    },
     stream::Stream,
     token::{any, one_of, take_till},
     PResult, Parser,
@@ -51,7 +53,7 @@ enum Op {
     Other,
 }
 
-pub struct DisplayParseError<'error, T> {
+struct DisplayParseError<'error, T> {
     error: &'error T,
 }
 
@@ -89,19 +91,23 @@ impl<'a, 'error> core::fmt::Display
     }
 }
 
+impl<'a> From<ParseError<&'a [SpannedToken<'a>], ContextError>> for WgslParseError {
+    fn from(error: ParseError<&'a [SpannedToken<'a>], ContextError>) -> Self {
+        let position = error.offset();
+        let display_error = DisplayParseError { error: &error };
+        let message = format!("{}", display_error);
+
+        WgslParseError {
+            message,
+            position,
+            context: error.into_inner(),
+        }
+    }
+}
+
 impl WgslParser {
     pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, WgslParseError> {
-        Self::translation_unit.parse(input).map_err(|e| {
-            let position = e.offset();
-            let display_error = DisplayParseError { error: &e };
-            let message = format!("{}", display_error);
-
-            WgslParseError {
-                message,
-                position,
-                context: e.into_inner(),
-            }
-        })
+        Self::translation_unit.parse(input).map_err(|e| e.into())
     }
 
     pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
@@ -198,9 +204,9 @@ impl WgslParser {
                 )
                 .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
                 '}',
-            )),
+            ))
+            .context(StrContext::Label("struct body")),
         )
-            .context(StrContext::Label("struct body"))
             .map(|(a, b)| Ast::single(AstNode::Declare(a)).join(b))
             .parse_next(input)
     }
@@ -304,6 +310,7 @@ impl WgslParser {
 
     pub fn compound_statement(input: &mut Input<'_>) -> PResult<Ast> {
         (Self::attributes, parens('{', Self::statements, '}'))
+            .context(StrContext::Label("compound statement"))
             .map(|(a, b)| {
                 Ast::single(AstNode::OpenBlock)
                     .join(a)
@@ -316,6 +323,11 @@ impl WgslParser {
     pub fn statement(input: &mut Input<'_>) -> PResult<Ast> {
         if let Some(non_attributed_statement) = opt(terminated(
             alt((
+                (word("break")).map(|_| Ast::default()),
+                (word("continue")).map(|_| Ast::default()),
+                (word("const_assert"), Self::expression).map(|(_, a)| a),
+                (word("discard")).map(|_| Ast::default()),
+                (word("return"), opt(Self::expression)).map(|(_, a)| a.unwrap_or_default()),
                 (
                     Self::ident,
                     opt(Self::template_args),
@@ -328,11 +340,6 @@ impl WgslParser {
                     .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
                 Self::variable_or_value_statement,
                 Self::variable_updating_statement,
-                (word("break")).map(|_| Ast::default()),
-                (word("continue")).map(|_| Ast::default()),
-                (word("const_assert"), Self::expression).map(|(_, a)| a),
-                (word("discard")).map(|_| Ast::default()),
-                (word("return"), opt(Self::expression)).map(|(_, a)| a.unwrap_or_default()),
             )),
             must_symbol(';'),
         ))
@@ -464,16 +471,16 @@ impl WgslParser {
             Self::var_statement,
             (
                 word("const"),
-                Self::declare_typed_ident,
-                symbol('='),
-                Self::expression,
+                cut_err(Self::declare_typed_ident).context(StrContext::Label("constant name")),
+                must_symbol('='),
+                cut_err(Self::expression).context(StrContext::Label("constant value")),
             )
                 .map(|(_, a, _, b)| a.join(b)),
             (
                 word("let"),
-                Self::declare_typed_ident,
-                symbol('='),
-                Self::expression,
+                cut_err(Self::declare_typed_ident).context(StrContext::Label("variable name")),
+                must_symbol('='),
+                cut_err(Self::expression).context(StrContext::Label("variable value")),
             )
                 .map(|(_, a, _, b)| a.join(b)),
         ))
@@ -483,7 +490,7 @@ impl WgslParser {
         alt((
             (
                 Self::lhs_expression,
-                alt((
+                cut_err(alt((
                     preceded(symbol('='), Self::expression),
                     // Unambiguous, lhs_expression cannot have a template at the end
                     preceded((symbol('<'), symbol('<'), symbol('=')), Self::expression),
@@ -498,10 +505,14 @@ impl WgslParser {
                     preceded((symbol('|'), symbol('=')), Self::expression),
                     (symbol('+'), symbol('+')).default_value(),
                     (symbol('-'), symbol('-')).default_value(),
-                )),
+                )))
+                .context(StrContext::Label("variable updating expression")),
             )
                 .map(|(a, b)| a.join(b)),
-            preceded((symbol('_'), symbol('=')), Self::expression),
+            preceded(
+                (symbol('_'), symbol('=')),
+                cut_err(Self::expression).context(StrContext::Label("discard expression")),
+            ),
         ))
         .parse_next(input)
     }
@@ -511,25 +522,37 @@ impl WgslParser {
             (Self::ident, opt(Self::component_or_swizzle_specifier))
                 .map(|(a, b)| Ast::single(AstNode::Use(a)).join(b)),
             (
-                parens('(', Self::lhs_expression, ')'),
+                parens(
+                    '(',
+                    cut_err(Self::lhs_expression)
+                        .context(StrContext::Label("nested lhs expression")),
+                    ')',
+                ),
                 opt(Self::component_or_swizzle_specifier),
             )
                 .map(|(a, b)| a.join(b)),
-            preceded(symbol('&'), Self::lhs_expression),
-            preceded(symbol('*'), Self::lhs_expression),
+            preceded(
+                symbol('&'),
+                cut_err(Self::lhs_expression).context(StrContext::Label("lhs expression")),
+            ),
+            preceded(
+                symbol('*'),
+                cut_err(Self::lhs_expression).context(StrContext::Label("lhs expression")),
+            ),
         ))
         .parse_next(input)
     }
 
     pub fn for_init(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
-            // TODO: Ambiguity between this and the Self::global_var branch of variable_or_value_statement
             (
                 Self::ident,
                 opt(Self::template_args),
-                Self::argument_expression_list,
+                // Ambiguity between this and the Self::global_var branch of variable_or_value_statement
+                peek(symbol('(')),
+                cut_err(Self::argument_expression_list),
             )
-                .map(|(a, b, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
             Self::variable_or_value_statement,
             Self::variable_updating_statement,
         ))
@@ -541,9 +564,11 @@ impl WgslParser {
             (
                 Self::ident,
                 opt(Self::template_args),
-                Self::argument_expression_list,
+                // Ambiguity between this and the Self::variable_updating_statement branch
+                peek(symbol('(')),
+                cut_err(Self::argument_expression_list),
             )
-                .map(|(a, b, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
             Self::variable_updating_statement,
         ))
         .parse_next(input)
@@ -553,16 +578,21 @@ impl WgslParser {
         let case_start = alt((
             preceded(
                 word("case"),
-                comma_separated(
+                cut_err(comma_separated(
                     1..,
                     alt((word("default").default_value::<Ast>(), Self::expression)),
-                )
+                ))
+                .context(StrContext::Label("switch case expression"))
                 .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
             ),
             word("default").default_value::<Ast>(),
         ))
         .parse_next(input)?;
-        let case_body = preceded(opt(symbol(':')), Self::compound_statement).parse_next(input)?;
+        let case_body = preceded(
+            opt(symbol(':')),
+            cut_err(Self::compound_statement).context(StrContext::Label("switch case body")),
+        )
+        .parse_next(input)?;
         Ok(case_start.join(case_body))
     }
 
@@ -579,6 +609,7 @@ impl WgslParser {
     pub fn type_specifier(input: &mut Input<'_>) -> PResult<Ast> {
         // Unambiguous, except for the fact that template_args can contain expressions
         (Self::ident, opt(Self::template_args))
+            .context(StrContext::Label("type specifier"))
             .map(|(a, b)| Ast::single(AstNode::Use(a)).join(b))
             .parse_next(input)
     }
@@ -617,6 +648,7 @@ impl WgslParser {
             comma_separated(0.., Self::expression).map(|v: Vec<_>| v.into_iter().collect()),
             ')',
         )
+        .context(StrContext::Label("argument expression list"))
         .parse_next(input)
     }
 
@@ -637,7 +669,9 @@ impl WgslParser {
                     // - No token matched, template end is not found
                     // - Syntax error, cannot have && or || inside a template
                     input.reset(&start_checkpoint);
-                    return fail.parse_next(input);
+                    return cut_err(fail)
+                        .context(StrContext::Label("template expression ending"))
+                        .parse_next(input);
                 }
                 Ok(Op::GreaterThan) => {
                     // This is the end of a template
@@ -649,7 +683,9 @@ impl WgslParser {
                 }
             };
 
-            let next = Self::unary_expression.parse_next(input)?;
+            let next = cut_err(Self::unary_expression)
+                .context(StrContext::Label("expression after operator (in template)"))
+                .parse_next(input)?;
             ast = ast.join(next);
         }
     }
@@ -685,7 +721,9 @@ impl WgslParser {
                 }
             };
 
-            let next = Self::unary_expression.parse_next(input)?;
+            let next = cut_err(Self::unary_expression)
+                .context(StrContext::Label("expression after operator (in template)"))
+                .parse_next(input)?;
             ast = ast.join(next);
         }
     }
@@ -696,7 +734,11 @@ impl WgslParser {
 
         let next = repeat(
             0..,
-            preceded(Self::expression_operator, Self::unary_expression),
+            preceded(
+                Self::expression_operator,
+                cut_err(Self::unary_expression)
+                    .context(StrContext::Label("expression after operator")),
+            ),
         )
         .map(|v: Vec<_>| -> Ast { v.into_iter().collect() })
         .parse_next(input)?;
@@ -750,14 +792,16 @@ impl WgslParser {
                     Token::Symbol('-'),
                     Token::Symbol('~'),
                 ]),
-                Self::unary_expression,
+                cut_err(Self::unary_expression)
+                    .context(StrContext::Label("expression after unary operator")),
             ),
             (
-                Self::primary_expression,
+                Self::primary_expression.context(StrContext::Label("primary expression")),
                 opt(Self::component_or_swizzle_specifier),
             )
                 .map(|(a, b)| a.join(b)),
         ))
+        .context(StrContext::Label("unary expression"))
         .parse_next(input)
     }
 
@@ -772,10 +816,16 @@ impl WgslParser {
                 // This one is ambiguous, because it could either
                 // - be a template or
                 // - be skipped and be a less than operator
-                let template_args = opt(Self::maybe_template_args).parse_next(input)?;
+                let template_args =
+                    opt(Self::maybe_template_args
+                        .context(StrContext::Label("template or less than")))
+                    .parse_next(input)?;
+                // Only parse the arguments if could be a template
                 let arguments = match template_args {
-                    Some((_, IsTemplateResult::No)) => None,
-                    _ => opt(Self::argument_expression_list).parse_next(input)?,
+                    None | Some((_, IsTemplateResult::Yes)) => {
+                        opt(Self::argument_expression_list).parse_next(input)?
+                    }
+                    _ => None,
                 };
 
                 Ok(Ast::single(AstNode::Use(ident))
@@ -785,7 +835,11 @@ impl WgslParser {
         } else {
             alt((
                 Self::literal.default_value::<Ast>(),
-                parens('(', Self::expression, ')'),
+                parens(
+                    '(',
+                    cut_err(Self::expression).context(StrContext::Label("nested expression")),
+                    ')',
+                ),
             ))
             .parse_next(input)
         }
@@ -794,24 +848,33 @@ impl WgslParser {
     pub fn template_args(input: &mut Input<'_>) -> PResult<Ast> {
         delimited(
             symbol('<'),
-            comma_separated(1.., Self::template_expression)
-                .map(|v: Vec<_>| v.into_iter().collect()),
-            symbol('>'),
+            cut_err(
+                comma_separated(1.., Self::template_expression)
+                    .map(|v: Vec<_>| v.into_iter().collect()),
+            ),
+            must_symbol('>'),
         )
+        .context(StrContext::Label("template arguments"))
         .parse_next(input)
     }
 
     pub fn maybe_template_args(input: &mut Input<'_>) -> PResult<(Ast, IsTemplateResult)> {
         let _ = symbol('<').parse_next(input)?;
-        let (mut ast, is_template) = Self::maybe_template_expression.parse_next(input)?;
+        let (mut ast, is_template) = Self::maybe_template_expression
+            .context(StrContext::Label(
+                "expression in template or after less than",
+            ))
+            .parse_next(input)?;
         if is_template == IsTemplateResult::No {
             return Ok((ast, IsTemplateResult::No));
         }
         loop {
-            let separator = opt(symbol(',')).parse_next(input)?;
-            if separator.is_none() {
+            if let Some(_end) = opt(symbol('>')).parse_next(input)? {
                 break;
             }
+            // If the template isn't finished, we need at least one more comma
+            // This can be the trailing comma
+            let _separator = must_symbol(',').parse_next(input)?;
             let checkpoint = input.checkpoint();
             let next = match Self::template_expression.parse_next(input) {
                 Ok(v) => v,
@@ -834,8 +897,17 @@ impl WgslParser {
     pub fn component_or_swizzle_specifier(input: &mut Input<'_>) -> PResult<Ast> {
         (
             alt((
-                (symbol('.'), Self::ident_pattern_token).default_value::<Ast>(),
-                parens('[', Self::expression, ']'),
+                (
+                    symbol('.'),
+                    cut_err(Self::ident_pattern_token)
+                        .context(StrContext::Label("property access or swizzle")),
+                )
+                    .default_value::<Ast>(),
+                parens(
+                    '[',
+                    cut_err(Self::expression).context(StrContext::Label("nested expression")),
+                    ']',
+                ),
             )),
             opt(Self::component_or_swizzle_specifier),
         )
@@ -863,20 +935,19 @@ impl WgslParser {
 fn word(
     a: &str,
 ) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, Token<'_>, ContextError>(Token::Word(a)).context(StrContext::Label("word"))
+    token_kind(Token::Word(a))
 }
 
 fn symbol<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a)).context(StrContext::Label("symbol"))
+    token_kind(Token::Symbol(a))
 }
 
 fn must_symbol<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    cut_err(one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a)))
-        .context(StrContext::Expected(StrContextValue::CharLiteral(a)))
+    cut_err(symbol(a)).context(StrContext::Expected(StrContextValue::CharLiteral(a)))
 }
 
 fn symbol_pair<'a>(
@@ -890,7 +961,7 @@ fn symbol_pair<'a>(
 fn paren<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    one_of::<Input, Token<'a>, ContextError>(Token::Paren(a))
+    token_kind(Token::Paren(a))
 }
 
 fn parens<'a, Output>(
@@ -901,8 +972,9 @@ fn parens<'a, Output>(
     delimited(
         paren(a),
         parser,
-        cut_err(paren(b)).context(StrContext::Label("closing parenthesis")),
+        cut_err(paren(b)).context(StrContext::Expected(StrContextValue::CharLiteral(b))),
     )
+    .context(StrContext::Label("parentheses"))
 }
 
 fn comma_separated<'a, Accumulator, Output>(
@@ -921,5 +993,21 @@ where
 
 fn number<'a>() -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError>
 {
-    one_of::<Input, Token<'a>, ContextError>(Token::Number).context(StrContext::Label("number"))
+    token_kind(Token::Number)
+}
+
+fn token_kind<'a>(
+    token_kind: Token<'a>,
+) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
+    move |input: &mut Input<'a>| {
+        let checkpoint = input.checkpoint();
+        match input.next_token() {
+            Some(v) if v.token == token_kind => Ok(v),
+            Some(_) => {
+                input.reset(&checkpoint);
+                Err(ErrMode::from_error_kind(input, ErrorKind::Verify))
+            }
+            None => Err(ErrMode::from_error_kind(input, ErrorKind::Token)),
+        }
+    }
 }

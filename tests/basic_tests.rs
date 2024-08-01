@@ -4,6 +4,7 @@ use wgsl_linker_reference::{
     parser_output::{Ast, AstNode, Variable},
     tokenizer::Tokenizer,
 };
+use winnow::Parser;
 
 #[test]
 fn global_directive() {
@@ -59,7 +60,7 @@ fn parse_attribute() {
     let source = "@group(0)";
     let t = Tokenizer::tokenize(source).unwrap();
 
-    println!("{:?}", WgslParser::attribute(&mut &*t).unwrap());
+    println!("{:?}", WgslParser::attribute.parse(&t).unwrap());
 }
 
 #[test]
@@ -70,7 +71,7 @@ fn parse_templates() {
         let t = Tokenizer::tokenize(source).unwrap();
 
         assert_eq!(
-            WgslParser::template_args(&mut &*t).unwrap(),
+            WgslParser::template_args.parse(&t).unwrap(),
             Ast([AstNode::Use(Variable((1, 8)))].to_vec())
         );
     }
@@ -79,8 +80,61 @@ fn parse_templates() {
         let t = Tokenizer::tokenize(source).unwrap();
 
         assert_eq!(
-            WgslParser::template_args(&mut &*t).unwrap(),
+            WgslParser::template_args.parse(&t).unwrap(),
             Ast([AstNode::Use(Variable((1, 4)))].to_vec())
+        );
+    }
+}
+
+#[test]
+fn parse_bracketed_arguments() {
+    let source = "( 0.0,  0.5)";
+    let t = Tokenizer::tokenize(source).unwrap();
+    assert_eq!(
+        WgslParser::argument_expression_list.parse(&t),
+        Ok(Ast::new())
+    );
+}
+
+#[test]
+fn parse_templated_expression() {
+    {
+        let source = "array<vec2f>(
+    vec2( 0.0,  0.5),
+  )";
+        let t = Tokenizer::tokenize(source).unwrap();
+        /*
+        Debug printing using the following
+        println!(
+            "{}",
+            WgslParser::expression
+                .parse(&t)
+                .map_err(|e| WgslParseError::from(e))
+                .unwrap_err()
+        );*/
+        assert_eq!(
+            WgslParser::expression.parse(&t),
+            Ok(Ast([
+                AstNode::Use(Variable((0, 5))),
+                AstNode::Use(Variable((6, 11))),
+                AstNode::Use(Variable((18, 22)))
+            ]
+            .to_vec()))
+        );
+    }
+    {
+        let source = "array<vec2f||3>(
+          vec2( 0.0,  0.5)
+        )";
+        let t = Tokenizer::tokenize(source).unwrap();
+        assert_eq!(
+            WgslParser::expression.parse(&t),
+            Ok(Ast([
+                AstNode::Use(Variable((0, 5))),
+                AstNode::Use(Variable((6, 11))),
+                AstNode::Use(Variable((27, 31)))
+            ]
+            .to_vec()))
         );
     }
 }
@@ -104,11 +158,5 @@ fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec
 fn frag_main() -> @location(0) vec4f {
   return vec4(1, sin(f32(frame) / 128), 0, 1);
 }";
-    let t = Tokenizer::tokenize(source).unwrap();
-
-    println!("{}", WgslParser::parse(&t).unwrap_err());
-    assert_eq!(
-        WgslParser::parse(&t).unwrap(),
-        Ast([AstNode::Use(Variable((1, 8)))].to_vec())
-    );
+    assert!(parse(&source).is_ok());
 }
