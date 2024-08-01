@@ -1,9 +1,9 @@
 use winnow::{
     combinator::{
-        alt, cut_err, delimited, dispatch, empty, fail, opt, peek, preceded, repeat, separated,
-        seq, terminated,
+        alt, cut_err, delimited, dispatch, empty, eof, fail, opt, peek, preceded, repeat,
+        separated, seq, terminated,
     },
-    error::{ContextError, ErrMode, StrContext},
+    error::{ContextError, ErrMode, ParseError, StrContext, StrContextValue},
     stream::Stream,
     token::{any, one_of, take_till},
     PResult, Parser,
@@ -51,15 +51,57 @@ enum Op {
     Other,
 }
 
+pub struct DisplayParseError<'error, T> {
+    error: &'error T,
+}
+
+impl<'a, 'error> core::fmt::Display
+    for DisplayParseError<'error, ParseError<&'a [SpannedToken<'a>], ContextError>>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let tokens = self.error.input();
+        let offset = self.error.offset();
+        let tokens_at_error = &tokens[offset..];
+        let error_message = self.error.inner().to_string();
+
+        match tokens_at_error.get(0) {
+            Some(token) => {
+                writeln!(f, "parse error at offset {}.", token.span.0)?;
+                let tokens_before_error = &tokens[offset.saturating_sub(2)..offset];
+                let tokens_after_error = &tokens[offset..(offset + 5).min(tokens.len())];
+                let mut tokens_before_text = String::new();
+                for token in tokens_before_error {
+                    tokens_before_text.push_str(format!("{:?} ", token.token).as_str());
+                }
+                write!(f, "{}", tokens_before_text)?;
+                for token in tokens_after_error {
+                    write!(f, "{:?} ", token.token)?;
+                }
+                writeln!(f)?;
+                for _ in 0..tokens_before_text.len() {
+                    write!(f, " ")?;
+                }
+                writeln!(f, "^{}", error_message)?;
+            }
+            None => writeln!(f, "{}.", error_message)?,
+        };
+        Ok(())
+    }
+}
+
 impl WgslParser {
     pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, WgslParseError> {
-        Self::translation_unit
-            .parse(input)
-            .map_err(|e| WgslParseError {
-                message: format!("{:?}", e),
-                position: e.offset(),
+        Self::translation_unit.parse(input).map_err(|e| {
+            let position = e.offset();
+            let display_error = DisplayParseError { error: &e };
+            let message = format!("{}", display_error);
+
+            WgslParseError {
+                message,
+                position,
                 context: e.into_inner(),
-            })
+            }
+        })
     }
 
     pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
@@ -69,6 +111,9 @@ impl WgslParser {
             .parse_next(input)?;
         let declarations = Self::global_decls
             .context(StrContext::Label("global declarations"))
+            .parse_next(input)?;
+        let _ = cut_err(eof)
+            .context(StrContext::Label("end of WGSL file"))
             .parse_next(input)?;
 
         Ok(declarations.into_iter().collect())
@@ -83,22 +128,28 @@ impl WgslParser {
     pub fn global_directive(input: &mut Input<'_>) -> PResult<()> {
         let _start =
             alt((word("diagnostic"), word("enable"), word("requires"))).parse_next(input)?;
-        let _rule = cut_err(take_till(1.., Token::Symbol(';'))).parse_next(input)?;
-        let _end = symbol(';').parse_next(input)?;
+        let _rule = cut_err(take_till(1.., Token::Symbol(';')))
+            .context(StrContext::Label("directive"))
+            .parse_next(input)?;
+        let _end = must_symbol(';').parse_next(input)?;
         Ok(())
     }
 
     pub fn global_decls(input: &mut Input<'_>) -> PResult<Vec<Ast>> {
-        repeat(0.., Self::global_decl).parse_next(input)
+        repeat(
+            0..,
+            Self::global_decl.context(StrContext::Label("top level declaration")),
+        )
+        .parse_next(input)
     }
 
     pub fn global_decl(input: &mut Input<'_>) -> PResult<Ast> {
         if let Some(non_attributed_global) = opt(dispatch! {any.map(|v: SpannedToken| v.token);
                 Token::Symbol(';') => empty.default_value::<Ast>(),
-                Token::Word("alias") => Self::continue_global_alias,
-                Token::Word("const_assert") => terminated(Self::expression, symbol(';')),
-                Token::Word("struct") => Self::continue_global_struct,
-                Token::Word("const") => Self::continue_global_const,
+                Token::Word("alias") => cut_err(Self::continue_global_alias).context(StrContext::Label("alias")),
+                Token::Word("const_assert") => cut_err(terminated(Self::expression, must_symbol(';'))).context(StrContext::Label("const assertion")),
+                Token::Word("struct") => cut_err(Self::continue_global_struct).context(StrContext::Label("struct")),
+                Token::Word("const") => cut_err(Self::continue_global_const).context(StrContext::Label("constant")),
                 _ => fail,
         })
         .parse_next(input)?
@@ -122,10 +173,10 @@ impl WgslParser {
 
     fn continue_global_alias(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            Self::ident,
-            _: symbol('='),
-            Self::type_specifier,
-            _: symbol(';'),
+            cut_err(Self::ident).context(StrContext::Label("alias name")),
+            _: must_symbol('='),
+            cut_err(Self::type_specifier).context(StrContext::Label("type specifier")),
+            _: must_symbol(';'),
         )
         .map(|(a, c)| Ast::single(AstNode::Use(a)).join(c))
         .parse_next(input)
@@ -133,32 +184,33 @@ impl WgslParser {
 
     fn continue_global_struct(input: &mut Input<'_>) -> PResult<Ast> {
         (
-            Self::ident,
-            parens(
+            cut_err(Self::ident).context(StrContext::Label("struct name")),
+            cut_err(parens(
                 '{',
                 comma_separated(
                     1..,
                     (
                         Self::attributes,
-                        (Self::ident_pattern_token, symbol(':')),
+                        (Self::ident_pattern_token, must_symbol(':')),
                         Self::type_specifier,
                     )
                         .map(|(a, _, b)| a.join(b)),
                 )
                 .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
                 '}',
-            ),
+            )),
         )
+            .context(StrContext::Label("struct body"))
             .map(|(a, b)| Ast::single(AstNode::Declare(a)).join(b))
             .parse_next(input)
     }
 
     fn continue_global_const(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            Self::declare_typed_ident,
-            _: symbol('='),
-            Self::expression,
-            _: symbol(';'),
+            cut_err(Self::declare_typed_ident).context(StrContext::Label("constant name")),
+            _: must_symbol('='),
+            cut_err(Self::expression).context(StrContext::Label("constant value")),
+            _: must_symbol(';'),
         )
         .map(|(a, b)| a.join(b))
         .parse_next(input)
@@ -166,22 +218,29 @@ impl WgslParser {
 
     fn global_fn(input: &mut Input<'_>) -> PResult<Ast> {
         let _ = word("fn").parse_next(input)?;
-        let name = Self::ident.parse_next(input)?;
+        let name = cut_err(Self::ident)
+            .context(StrContext::Label("function name"))
+            .parse_next(input)?;
 
-        let params = parens(
+        let params = cut_err(parens(
             '(',
             comma_separated(0.., Self::fn_param).map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
             ')',
-        )
+        ))
+        .context(StrContext::Label("function parameters"))
         .parse_next(input)?;
 
         let return_type = opt(preceded(
             // Unambiguous
             symbol_pair(['-', '>']),
-            (Self::attributes, Self::type_specifier).map(|(a, b)| a.join(b)),
+            cut_err((Self::attributes, Self::type_specifier))
+                .context(StrContext::Label("return type"))
+                .map(|(a, b)| a.join(b)),
         ))
         .parse_next(input)?;
-        let body = Self::compound_statement.parse_next(input)?;
+        let body = cut_err(Self::compound_statement)
+            .context(StrContext::Label("function body"))
+            .parse_next(input)?;
 
         Ok(Ast::single(AstNode::Declare(name))
             .join(Ast::single(AstNode::OpenBlock))
@@ -195,22 +254,27 @@ impl WgslParser {
         seq!(
             Self::attributes,
             Self::ident,
-            preceded(symbol(':'), Self::type_specifier),
+            cut_err(preceded(must_symbol(':'), Self::type_specifier))
+                .context(StrContext::Label("function parameter type")),
         )
         .map(|(a, b, c)| a.join(Ast::single(AstNode::Declare(b))).join(c))
         .parse_next(input)
     }
 
     fn global_var(input: &mut Input<'_>) -> PResult<Ast> {
-        terminated(Self::var_statement, symbol(';')).parse_next(input)
+        terminated(Self::var_statement, must_symbol(';')).parse_next(input)
     }
     fn var_statement(input: &mut Input<'_>) -> PResult<Ast> {
         // Things like var<private> d: f32
         preceded(
             (word("var"), opt(Self::template_args)),
             (
-                Self::declare_typed_ident,
-                opt(preceded(symbol('='), Self::expression)),
+                cut_err(Self::declare_typed_ident)
+                    .context(StrContext::Label("variable name and type")),
+                opt(preceded(
+                    symbol('='),
+                    cut_err(Self::expression).context(StrContext::Label("variable value")),
+                )),
             )
                 .map(|(a, b)| a.join(b)),
         )
@@ -219,19 +283,21 @@ impl WgslParser {
     fn global_override(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
             _: word("override"),
-            Self::declare_typed_ident,
+            cut_err(Self::declare_typed_ident)
+                .context(StrContext::Label("pipeline overridable constant name and type")),
             opt(preceded(
                 symbol('='),
-                Self::expression
+                cut_err(Self::expression)
+                    .context(StrContext::Label("pipeline overridable constant value")),
             )),
-            _: symbol(';')
+            _: must_symbol(';')
         )
         .map(|(a, b)| a.join(b))
         .parse_next(input)
     }
 
     pub fn statements(input: &mut Input<'_>) -> PResult<Ast> {
-        repeat(0.., Self::statement)
+        repeat(0.., Self::statement.context(StrContext::Label("statement")))
             .map(|v: Vec<_>| v.into_iter().collect())
             .parse_next(input)
     }
@@ -265,7 +331,7 @@ impl WgslParser {
                 (word("discard")).map(|_| Ast::default()),
                 (word("return"), opt(Self::expression)).map(|(_, a)| a.unwrap_or_default()),
             )),
-            symbol(';'),
+            must_symbol(';'),
         ))
         .parse_next(input)?
         {
@@ -282,9 +348,9 @@ impl WgslParser {
                 _: word("for"),
                 _: paren('('),
                 opt(Self::for_init),
-                _: symbol(';'),
+                _: must_symbol(';'),
                 opt(Self::expression),
-                _: symbol(';'),
+                _: must_symbol(';'),
                 opt(Self::for_update),
                 _: paren(')'),
                 Self::compound_statement,
@@ -326,7 +392,7 @@ impl WgslParser {
                     opt(delimited(
                         (word("break"), word("if")),
                         Self::expression,
-                        symbol(';'),
+                        must_symbol(';'),
                     )),
                     paren('}'),
                 )
@@ -480,15 +546,29 @@ impl WgslParser {
 
     pub fn attribute(input: &mut Input<'_>) -> PResult<Ast> {
         let _start = symbol('@').parse_next(input)?;
-        let name = Self::ident_pattern_token.parse_next(input)?;
-        let expressions = Self::argument_expression_list.parse_next(input)?;
+        let name = cut_err(Self::ident_pattern_token)
+            .context(StrContext::Label("attribute name"))
+            .parse_next(input)?;
 
         match name {
-            "compute" | "const" | "fragment" | "interpolate" | "invariant" | "must_use"
-            | "vertex" | "builtin" | "diagnostic" => Ok(Default::default()),
+            // These attributes have no arguments
+            "compute" | "const" | "fragment" | "invariant" | "must_use" | "vertex" => {
+                Ok(Ast::default())
+            } // These attributes have arguments, but the argument doesn't have any identifiers
+            "interpolate" | "builtin" | "diagnostic" => cut_err(Self::argument_expression_list)
+                .default_value()
+                .context(StrContext::Label("attribute expression"))
+                .parse_next(input),
+            // These are normal attributes
             "workgroup_size" | "align" | "binding" | "blend_src" | "group" | "id" | "location"
-            | "size" => Ok(expressions),
-            _ => fail.parse_next(input),
+            | "size" => cut_err(Self::argument_expression_list)
+                .context(StrContext::Label("attribute expression"))
+                .parse_next(input),
+            // Everything else is also a normal attribute, it might have an expression list
+            _ => opt(Self::argument_expression_list)
+                .map(|v| v.unwrap_or_default())
+                .context(StrContext::Label("attribute expression"))
+                .parse_next(input),
         }
     }
 
@@ -753,6 +833,13 @@ fn symbol<'a>(
     one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a)).context(StrContext::Label("symbol"))
 }
 
+fn must_symbol<'a>(
+    a: char,
+) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
+    cut_err(one_of::<Input, Token<'a>, ContextError>(Token::Symbol(a)))
+        .context(StrContext::Expected(StrContextValue::CharLiteral(a)))
+}
+
 fn symbol_pair<'a>(
     a: [char; 2],
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Slice, ContextError> {
@@ -765,7 +852,6 @@ fn paren<'a>(
     a: char,
 ) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
     one_of::<Input, Token<'a>, ContextError>(Token::Paren(a))
-        .context(StrContext::Label("parenthesis"))
 }
 
 fn parens<'a, Output>(
@@ -773,7 +859,11 @@ fn parens<'a, Output>(
     parser: impl Parser<Input<'a>, Output, ContextError>,
     b: char,
 ) -> impl Parser<Input<'a>, Output, ContextError> {
-    delimited(paren(a), parser, paren(b))
+    delimited(
+        paren(a),
+        parser,
+        cut_err(paren(b)).context(StrContext::Label("closing parenthesis")),
+    )
 }
 
 fn comma_separated<'a, Accumulator, Output>(

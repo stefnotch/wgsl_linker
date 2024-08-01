@@ -90,7 +90,8 @@ fn parse_hard_templates() {
     let source = "@binding(0) @group(0) var<uniform> frame : u32;
 @vertex
 fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec4f {
-  const pos = array<vec2f, u32(3<5) + 2>( // Cursed template
+  let a = 1;
+  const pos = array<vec2f, u32(3<5) + 2 + u32(a<a)>( // Cursed template
     vec2( 0.0,  0.5),
     vec2(-0.5, -0.5),
     vec2( 0.5, -0.5)
@@ -105,6 +106,7 @@ fn frag_main() -> @location(0) vec4f {
 }";
     let t = Tokenizer::tokenize(source).unwrap();
 
+    println!("{}", WgslParser::parse(&t).unwrap_err());
     assert_eq!(
         WgslParser::parse(&t).unwrap(),
         Ast([AstNode::Use(Variable((1, 8)))].to_vec())

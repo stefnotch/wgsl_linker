@@ -14,6 +14,12 @@ pub struct WgslParseError {
     pub context: winnow::error::ContextError,
 }
 
+impl std::fmt::Display for WgslParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
 pub fn parse(input: &str) -> Result<parser_output::Ast, WgslParseError> {
     let tokens = tokenizer::Tokenizer::tokenize(input)?;
     let ast = parser::WgslParser::parse(&tokens)?;
