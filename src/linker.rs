@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
+use thiserror::Error;
 
 use crate::{
     parse,
@@ -35,8 +36,12 @@ pub struct ParsedModule {
     pub imports: HashMap<String, (ModuleKey, String)>,
 }
 
+#[derive(Error, Debug)]
 pub enum LinkingError {
+    #[error("the imported item {variable} was redefined")]
     Redefinition { variable: String },
+    #[error("multiple errors occurred {0:?}")]
+    Aggregate(Vec<LinkingError>),
 }
 
 // To generate a linked module, we need
@@ -94,12 +99,17 @@ impl Linker {
         UnmangledName { module, name }
     }
 
-    pub fn compile_module(&self, module: ModuleKey) -> String {
+    pub fn compile_module(&self, module: ModuleKey) -> Result<String, LinkingError> {
         let parsed_module = &self.modules[module];
         let mut visitor = LinkerVisitor::new(self, module);
-        parsed_module
+        let result = parsed_module
             .ast
-            .rewrite(&parsed_module.source, &mut visitor)
+            .rewrite(&parsed_module.source, &mut visitor);
+        if visitor.errors.is_empty() {
+            Ok(result)
+        } else {
+            Err(LinkingError::Aggregate(visitor.errors))
+        }
     }
 }
 

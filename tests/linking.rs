@@ -27,7 +27,9 @@ fn basic_linking() {
         .imports
         .insert("uno".to_string(), (foo_module, "uno".to_string()));
 
-    let result = linker.compile_module(foo_module) + "\n" + &linker.compile_module(bar_module);
+    let result = linker.compile_module(foo_module).unwrap()
+        + "\n"
+        + &linker.compile_module(bar_module).unwrap();
     assert_eq!(
         &result,
         "fn foo_uno() -> u32 { return 1; }

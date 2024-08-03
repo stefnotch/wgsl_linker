@@ -7,11 +7,21 @@ pub mod rewriter;
 pub mod token;
 pub mod tokenizer;
 
-#[derive(Debug)]
 pub struct WgslParseError {
     pub message: String,
     pub position: usize,
     pub context: winnow::error::ContextError,
+}
+
+impl std::fmt::Debug for WgslParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "WgslParseError: {}", self.message)?;
+        f.debug_struct("WgslParseError")
+            .field("message", &"...")
+            .field("position", &self.position)
+            .field("context", &self.context)
+            .finish()
+    }
 }
 
 impl std::fmt::Display for WgslParseError {
