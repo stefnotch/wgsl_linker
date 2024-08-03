@@ -4,9 +4,9 @@ pub trait Rewriter<'a> {
     /// Like a sax parser, this will be called for each node in the AST.
     fn open_block(&mut self);
     fn close_block(&mut self);
-    fn declare(&mut self, variable: &'a str);
-    /// To change the variable name, return a new name.
-    /// To keep the variable name, return None.
+    /// Change the variable by returning a new name.
+    fn declare(&mut self, variable: &'a str) -> Option<String>;
+    /// Change the variable by returning a new name.
     fn use_variable(&mut self, variable: &'a str) -> Option<String>;
 }
 
@@ -37,7 +37,13 @@ impl Ast {
                 AstNode::OpenBlock => visitor.open_block(),
                 AstNode::CloseBlock => visitor.close_block(),
                 AstNode::Declare(var) => {
-                    visitor.declare(&source[var.range()]);
+                    let range = var.range();
+                    result.push_str(&source[source_index..range.start]);
+                    source_index = range.end;
+                    match visitor.declare(&source[range.clone()]) {
+                        Some(new_var) => result.push_str(&new_var),
+                        None => result.push_str(&source[range]),
+                    }
                 }
                 AstNode::Use(var) => {
                     let range = var.range();
@@ -50,6 +56,7 @@ impl Ast {
                 }
             }
         }
+        result.push_str(&source[source_index..]);
         result
     }
 }
