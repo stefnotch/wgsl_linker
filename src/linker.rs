@@ -12,6 +12,11 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePath(pub Vec<String>);
+impl ModulePath {
+    pub fn from_slice(slice: &[&str]) -> Self {
+        Self(slice.iter().map(|s| s.to_string()).collect())
+    }
+}
 
 #[derive(Default)]
 pub struct Linker {
@@ -36,6 +41,11 @@ pub struct ParsedModule {
     pub imports: HashMap<String, (ModuleKey, String)>,
 }
 
+/// Module compilation is independent of other modules. It only depends on the source code of the module.
+pub(crate) struct CompiledModule {
+    pub mangled_source: String,
+}
+
 #[derive(Error, Debug)]
 pub enum LinkingError {
     #[error("the imported item {variable} was redefined")]
@@ -43,16 +53,6 @@ pub enum LinkingError {
     #[error("multiple errors occurred {0:?}")]
     Aggregate(Vec<LinkingError>),
 }
-
-// To generate a linked module, we need
-// - Module
-// - Imports:
-//   Name: Refers to (other module, item)
-// We then generate new code with mangled names.
-// We also strip the import and export statements in this step.
-// The code isn't usable by itself.
-
-// And to generate the final module, we join all the modules together.
 
 pub struct UnmangledName<'a> {
     pub module: ModuleKey,
@@ -72,7 +72,7 @@ impl Linker {
         let module_key = self.module_names.insert(name);
         let ast = parse(&source)?;
         let global_items = ast.get_global_items(&source);
-        let imports = HashMap::new(); // TODO: ast.get_imports(&source);
+        let imports = HashMap::new(); // TODO: ast.get_imports(&source); and strip the import and export statements
         self.modules.insert(
             module_key,
             ParsedModule {
@@ -83,6 +83,11 @@ impl Linker {
             },
         );
         Ok(module_key)
+    }
+
+    pub fn remove_module(&mut self, module: ModuleKey) {
+        let _ = self.modules.remove(module);
+        let _ = self.module_names.remove(module);
     }
 
     fn module_name_for_mangling(&self, module: ModuleKey) -> String {
@@ -99,18 +104,22 @@ impl Linker {
         UnmangledName { module, name }
     }
 
-    pub fn compile_module(&self, module: ModuleKey) -> Result<String, LinkingError> {
+    fn compile_single_module(&self, module: ModuleKey) -> Result<CompiledModule, LinkingError> {
         let parsed_module = &self.modules[module];
         let mut visitor = LinkerVisitor::new(self, module);
         let result = parsed_module
             .ast
             .rewrite(&parsed_module.source, &mut visitor);
         if visitor.errors.is_empty() {
-            Ok(result)
+            Ok(CompiledModule {
+                mangled_source: result,
+            })
         } else {
             Err(LinkingError::Aggregate(visitor.errors))
         }
     }
+
+    // pub fn compile(&self, entry_point: ModuleKey) -> Result<String, LinkingError> {}
 }
 
 struct LinkerVisitor<'a> {
@@ -219,4 +228,47 @@ impl<'a> Visitor<'a> for GlobalItemsVisitor {
     }
 
     fn use_variable(&mut self, _variable: &str) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Linker, ModulePath};
+
+    #[test]
+    fn basic_linking() {
+        let mut linker = Linker::new();
+        let foo_module = linker
+            .add_module_source(
+                ModulePath::from_slice(&["foo"]),
+                "fn uno() -> u32 { return 1; }".to_string(),
+            )
+            .unwrap();
+        let bar_module = linker
+            .add_module_source(
+                ModulePath::from_slice(&["bar"]),
+                "fn dos() -> u32 { return uno() + uno   (); }".to_string(),
+            )
+            .unwrap();
+
+        // Manually inject the import
+        let parsed_bar = linker.modules.get_mut(bar_module).unwrap();
+        parsed_bar
+            .imports
+            .insert("uno".to_string(), (foo_module, "uno".to_string()));
+
+        assert_eq!(
+            &linker
+                .compile_single_module(foo_module)
+                .unwrap()
+                .mangled_source,
+            "fn foo_uno() -> u32 { return 1; }",
+        );
+        assert_eq!(
+            &linker
+                .compile_single_module(bar_module)
+                .unwrap()
+                .mangled_source,
+            "fn bar_dos() -> u32 { return foo_uno() + foo_uno   (); }",
+        );
+    }
 }
