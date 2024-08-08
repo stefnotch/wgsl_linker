@@ -1,6 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Variable(pub (usize, usize));
-impl Variable {
+pub struct VariableSpan(pub (usize, usize));
+impl VariableSpan {
     pub fn range(&self) -> std::ops::Range<usize> {
         let (start, end) = self.0;
         start..end
@@ -9,8 +9,8 @@ impl Variable {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstNode {
-    Declare(Variable),
-    Use(Variable),
+    Declare(VariableSpan),
+    Use(VariableSpan),
     OpenBlock,
     CloseBlock,
 }

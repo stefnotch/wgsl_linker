@@ -12,7 +12,7 @@ use winnow::{
 };
 
 use crate::{
-    parser_output::{Ast, AstNode, Variable},
+    parser_output::{Ast, AstNode, VariableSpan},
     token::{SpannedToken, Token},
     WgslParseError,
 };
@@ -915,9 +915,9 @@ impl WgslParser {
             .parse_next(input)
     }
 
-    pub fn ident(input: &mut Input<'_>) -> PResult<Variable> {
+    pub fn ident(input: &mut Input<'_>) -> PResult<VariableSpan> {
         any.verify_map(|v: SpannedToken<'_>| match v.token {
-            Token::Word(_) => Some(Variable(v.span)),
+            Token::Word(_) => Some(VariableSpan(v.span)),
             _ => None,
         })
         .parse_next(input)

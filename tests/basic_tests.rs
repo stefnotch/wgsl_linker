@@ -1,7 +1,7 @@
 use wgsl_linker_reference::{
     parse,
     parser::WgslParser,
-    parser_output::{Ast, AstNode, Variable},
+    parser_output::{Ast, AstNode, VariableSpan},
     tokenizer::Tokenizer,
 };
 use winnow::Parser;
@@ -72,7 +72,7 @@ fn parse_templates() {
 
         assert_eq!(
             WgslParser::template_args.parse(&t).unwrap(),
-            Ast([AstNode::Use(Variable((1, 8)))].to_vec())
+            Ast([AstNode::Use(VariableSpan((1, 8)))].to_vec())
         );
     }
     {
@@ -81,7 +81,7 @@ fn parse_templates() {
 
         assert_eq!(
             WgslParser::template_args.parse(&t).unwrap(),
-            Ast([AstNode::Use(Variable((1, 4)))].to_vec())
+            Ast([AstNode::Use(VariableSpan((1, 4)))].to_vec())
         );
     }
 }
@@ -115,9 +115,9 @@ fn parse_templated_expression() {
         assert_eq!(
             WgslParser::expression.parse(&t),
             Ok(Ast([
-                AstNode::Use(Variable((0, 5))),
-                AstNode::Use(Variable((6, 11))),
-                AstNode::Use(Variable((18, 22)))
+                AstNode::Use(VariableSpan((0, 5))),
+                AstNode::Use(VariableSpan((6, 11))),
+                AstNode::Use(VariableSpan((18, 22)))
             ]
             .to_vec()))
         );
@@ -130,9 +130,9 @@ fn parse_templated_expression() {
         assert_eq!(
             WgslParser::expression.parse(&t),
             Ok(Ast([
-                AstNode::Use(Variable((0, 5))),
-                AstNode::Use(Variable((6, 11))),
-                AstNode::Use(Variable((27, 31)))
+                AstNode::Use(VariableSpan((0, 5))),
+                AstNode::Use(VariableSpan((6, 11))),
+                AstNode::Use(VariableSpan((27, 31)))
             ]
             .to_vec()))
         );

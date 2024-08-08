@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     parse,
-    parser_output::Ast,
+    parser_output::{Ast, VariableSpan},
     rewriter::{Rewriter, Visitor},
     WgslParseError,
 };
