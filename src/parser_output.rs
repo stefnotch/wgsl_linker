@@ -5,6 +5,11 @@ impl VariableSpan {
         let (start, end) = self.0;
         start..end
     }
+
+    pub fn text<'source>(&self, source: &'source str) -> &'source str {
+        let range = self.range();
+        &source[range]
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -125,15 +125,6 @@ fn parse_templated_expression() {
     vec2( 0.0,  0.5),
   )";
         let t = Tokenizer::tokenize(source).unwrap();
-        /*
-        Debug printing using the following
-        println!(
-            "{}",
-            WgslParser::expression
-                .parse(&t)
-                .map_err(|e| WgslParseError::from(e))
-                .unwrap_err()
-        );*/
         assert_eq!(
             WgslParser::expression.parse(&t),
             Ok(Ast([
@@ -182,5 +173,80 @@ fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec
 fn frag_main() -> @location(0) vec4f {
   return vec4(1, sin(f32(frame) / 128), 0, 1);
 }";
-    assert!(parse(&source).is_ok());
+    let parse_result = parse(&source);
+    assert!(parse_result.is_ok());
+    let parse_result = parse_result.unwrap();
+    assert_eq!(
+        parse_result
+            .0
+            .iter()
+            .filter(|x| matches!(x, AstNode::Declare(_)))
+            .count(),
+        6
+    );
+    assert_eq!(
+        parse_result
+            .0
+            .iter()
+            .filter(|x| matches!(x, AstNode::TemplateStart))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn parse_atomics() {
+    // Simplified version of https://github.com/bevyengine/naga_oil/blob/master/src/compose/tests/atomics/mod.wgsl
+    let source = "var<workgroup> atom: atomic<u32>;
+    
+fn start() -> f32 {
+    atomicStore(&atom, 1u);
+    var y = atomicLoad(&atom);
+    y += atomicAdd(&atom, 2u);
+    let exchange = atomicCompareExchangeWeak(&atom, 12u, 0u);
+    if exchange.exchanged {
+        y += exchange.old_value;
+    }
+    return f32(y);
+}";
+    let parse_result = parse(&source);
+    println!("{:?}", parse_result);
+    assert!(parse_result.is_ok());
+    let parse_result = parse_result.unwrap();
+    assert_eq!(
+        ast_to_printable(&parse_result, &source),
+        [
+            PrintableNode::Declare("atom"),
+            // TODO:
+        ]
+        .to_vec()
+    );
+}
+
+// TODO: Example with operators (including <, <<, >, >=, <<=, etc)
+
+// TODO: Test per parser rule
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PrintableNode<'a> {
+    Declare(&'a str),
+    Use(&'a str),
+    TemplateStart,
+    TemplateEnd,
+    OpenBlock,
+    CloseBlock,
+}
+
+fn ast_to_printable<'a>(ast: &Ast, source: &'a str) -> Vec<PrintableNode<'a>> {
+    ast.0
+        .iter()
+        .map(|node| match node {
+            AstNode::Declare(var) => PrintableNode::Declare(var.text(source)),
+            AstNode::Use(var) => PrintableNode::Use(var.text(source)),
+            AstNode::TemplateStart => PrintableNode::TemplateStart,
+            AstNode::TemplateEnd => PrintableNode::TemplateEnd,
+            AstNode::OpenBlock => PrintableNode::OpenBlock,
+            AstNode::CloseBlock => PrintableNode::CloseBlock,
+        })
+        .collect()
 }
