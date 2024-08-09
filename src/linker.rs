@@ -1,11 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    borrow::Borrow,
+    collections::{HashMap, HashSet},
+};
 
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use thiserror::Error;
 
 use crate::{
     parse,
-    parser_output::{Ast, VariableSpan},
+    parser_output::Ast,
     rewriter::{Rewriter, Visitor},
     WgslParseError,
 };
@@ -29,6 +32,23 @@ new_key_type! {
     pub struct ModuleKey;
 }
 
+/// The name of an item in a module. Always a single string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ItemName(pub String);
+
+impl Borrow<str> for ItemName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A reference to an item in a module.
+/// In source code, it is written as `module_name::item_name`.
+pub struct ModuleItem {
+    pub module: ModuleKey,
+    pub name: ItemName,
+}
+
 pub enum GlobalItem {
     Private,
     Exported,
@@ -37,8 +57,8 @@ pub enum GlobalItem {
 pub struct ParsedModule {
     pub source: String,
     pub ast: Ast,
-    pub global_items: HashMap<String, GlobalItem>,
-    pub imports: HashMap<String, (ModuleKey, String)>,
+    pub global_items: HashMap<ItemName, GlobalItem>,
+    pub imports: HashMap<ItemName, ModuleItem>,
 }
 
 /// Module compilation is independent of other modules. It only depends on the source code of the module.
@@ -125,8 +145,8 @@ impl Linker {
 struct LinkerVisitor<'a> {
     linker: &'a Linker,
     module_key: ModuleKey,
-    imports: &'a HashMap<String, (ModuleKey, String)>,
-    global_items: &'a HashMap<String, GlobalItem>,
+    imports: &'a HashMap<ItemName, ModuleItem>,
+    global_items: &'a HashMap<ItemName, GlobalItem>,
     /// Keeps track of function scopes. Ignores the top-level scope.
     scoped_items: Vec<HashSet<&'a str>>,
     errors: Vec<LinkingError>,
@@ -183,10 +203,10 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
         if self.is_local(variable) {
             // Keep local variable names
             None
-        } else if let Some((module, name)) = self.imports.get(variable) {
+        } else if let Some(ModuleItem { module, name }) = self.imports.get(variable) {
             // Replace imports
             // Notice how this also handles "import cat as dog" renames
-            Some(self.linker.mangle_name(*module, name))
+            Some(self.linker.mangle_name(*module, &name.0))
         } else if self.global_items.contains_key(variable) {
             // Mangle all globals
             Some(self.linker.mangle_name(self.module_key, variable))
@@ -198,7 +218,7 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
 }
 
 impl Ast {
-    pub fn get_global_items<'a>(&self, source: &'a str) -> HashMap<String, GlobalItem> {
+    pub fn get_global_items<'a>(&self, source: &'a str) -> HashMap<ItemName, GlobalItem> {
         let mut visitor = GlobalItemsVisitor::default();
         self.visit(source, &mut visitor);
         visitor.items
@@ -207,7 +227,7 @@ impl Ast {
 
 #[derive(Default)]
 struct GlobalItemsVisitor {
-    items: HashMap<String, GlobalItem>,
+    items: HashMap<ItemName, GlobalItem>,
     block_level: usize,
 }
 
@@ -223,7 +243,7 @@ impl<'a> Visitor<'a> for GlobalItemsVisitor {
     fn declare(&mut self, variable: &'a str) {
         if self.block_level == 0 {
             self.items
-                .insert(variable.to_string(), GlobalItem::Exported);
+                .insert(ItemName(variable.to_string()), GlobalItem::Exported);
         }
     }
 
@@ -232,6 +252,8 @@ impl<'a> Visitor<'a> for GlobalItemsVisitor {
 
 #[cfg(test)]
 mod tests {
+    use crate::linker::{ItemName, ModuleItem};
+
     use super::{Linker, ModulePath};
 
     #[test]
@@ -252,9 +274,13 @@ mod tests {
 
         // Manually inject the import
         let parsed_bar = linker.modules.get_mut(bar_module).unwrap();
-        parsed_bar
-            .imports
-            .insert("uno".to_string(), (foo_module, "uno".to_string()));
+        parsed_bar.imports.insert(
+            ItemName("uno".to_string()),
+            ModuleItem {
+                module: foo_module,
+                name: ItemName("uno".to_string()),
+            },
+        );
 
         assert_eq!(
             &linker

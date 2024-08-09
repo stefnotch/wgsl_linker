@@ -15,6 +15,12 @@ pub trait Visitor<'a> {
     fn open_block(&mut self);
     fn close_block(&mut self);
     fn declare(&mut self, variable: &'a str);
+    // TODO: we will add more methods along the lines of "use_variable()", "module_fragment(name)", "finish_variable(name)".
+    // Aka module::something::variable ends up emitting
+    // 1. use_variable()
+    // 2. module_fragment("module") <= For resolving the module that the variable is in
+    // 3. module_fragment("something") <= For resolving the module that the variable is in
+    // 4. finish_variable("variable") <= Actual item name
     fn use_variable(&mut self, variable: &'a str);
 }
 
