@@ -13,6 +13,8 @@ pub enum AstNode {
     Use(VariableSpan),
     OpenBlock,
     CloseBlock,
+    TemplateStart,
+    TemplateEnd,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]

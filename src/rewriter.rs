@@ -32,6 +32,8 @@ impl Ast {
                 AstNode::CloseBlock => visitor.close_block(),
                 AstNode::Declare(var) => visitor.declare(&source[var.range()]),
                 AstNode::Use(var) => visitor.use_variable(&source[var.range()]),
+                AstNode::TemplateStart => {}
+                AstNode::TemplateEnd => {}
             }
         }
     }
@@ -60,6 +62,8 @@ impl Ast {
                         None => result.push_str(&source[range]),
                     }
                 }
+                AstNode::TemplateStart => {}
+                AstNode::TemplateEnd => {}
             }
         }
         result.push_str(&source[source_index..]);

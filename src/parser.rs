@@ -94,8 +94,7 @@ impl<'a, 'error> core::fmt::Display
 impl<'a> From<ParseError<&'a [SpannedToken<'a>], ContextError>> for WgslParseError {
     fn from(error: ParseError<&'a [SpannedToken<'a>], ContextError>) -> Self {
         let position = error.offset();
-        let display_error = DisplayParseError { error: &error };
-        let message = format!("{}", display_error);
+        let message = (DisplayParseError { error: &error }).to_string();
 
         WgslParseError {
             message,
@@ -848,12 +847,16 @@ impl WgslParser {
     pub fn template_args(input: &mut Input<'_>) -> PResult<Ast> {
         delimited(
             symbol('<'),
-            cut_err(
-                comma_separated(1.., Self::template_expression)
-                    .map(|v: Vec<_>| v.into_iter().collect()),
-            ),
+            cut_err(comma_separated(1.., Self::template_expression)),
             must_symbol('>'),
         )
+        .map(|v: Vec<_>| {
+            Ast::from_iter(
+                std::iter::once(Ast::single(AstNode::TemplateStart))
+                    .chain(v.into_iter())
+                    .chain(std::iter::once(Ast::single(AstNode::TemplateEnd))),
+            )
+        })
         .context(StrContext::Label("template arguments"))
         .parse_next(input)
     }
@@ -887,7 +890,12 @@ impl WgslParser {
 
             ast = ast.join(next);
         }
-        Ok((ast, IsTemplateResult::Yes))
+        Ok((
+            Ast::single(AstNode::TemplateStart)
+                .join(ast)
+                .join(Ast::single(AstNode::TemplateEnd)),
+            IsTemplateResult::Yes,
+        ))
     }
 
     pub fn literal(input: &mut Input<'_>) -> PResult<()> {

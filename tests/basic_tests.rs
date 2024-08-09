@@ -2,9 +2,34 @@ use wgsl_linker_reference::{
     parse,
     parser::WgslParser,
     parser_output::{Ast, AstNode, VariableSpan},
+    token::SpannedToken,
     tokenizer::Tokenizer,
 };
 use winnow::Parser;
+
+fn tokenize(source: &str) -> Vec<SpannedToken> {
+    Tokenizer::tokenize(source).unwrap()
+}
+
+#[test]
+fn translation_unit() {
+    let source = "fn main() -> f32 {
+    return 1.0;
+}";
+    assert_eq!(
+        WgslParser::translation_unit
+            .parse(&tokenize(&source))
+            .unwrap(),
+        Ast(vec![
+            AstNode::Declare(VariableSpan((3, 7))),
+            AstNode::OpenBlock,
+            AstNode::Use(VariableSpan((13, 16))),
+            AstNode::OpenBlock,
+            AstNode::CloseBlock,
+            AstNode::CloseBlock
+        ])
+    );
+}
 
 #[test]
 fn global_directive() {
@@ -25,34 +50,21 @@ fn main() -> f32 {
         return f32(arr[0]);
     }";
 
-    println!("{:?}", parse(source).unwrap());
+    assert!(parse(source).is_ok());
 }
 
 #[test]
 fn attribute_bindings() {
     let source = "@group(0) @binding(0) var<storage> lights : LightStorage;
 
+var<storage> lights1 : LightStorage;
+override lights2 : LightStorage;
+
 // Texture and sampler.
 @group(1) @binding(0) var baseColorSampler : sampler;
 @group(1) @binding(1) var baseColorTexture : texture_2d<f32>;";
 
-    println!("{:?}", parse(source).unwrap());
-}
-
-#[test]
-fn attribute_bindings1() {
-    let source = "var<storage> lights : LightStorage;
-";
-
-    println!("{:?}", parse(source).unwrap());
-}
-
-#[test]
-fn attribute_binding2() {
-    let source = "override lights : LightStorage;
-";
-
-    println!("{:?}", parse(source).unwrap());
+    assert!(parse(source).is_ok());
 }
 
 #[test]
@@ -60,7 +72,7 @@ fn parse_attribute() {
     let source = "@group(0)";
     let t = Tokenizer::tokenize(source).unwrap();
 
-    println!("{:?}", WgslParser::attribute.parse(&t).unwrap());
+    assert!(WgslParser::attribute.parse(&t).is_ok());
 }
 
 #[test]
@@ -72,7 +84,12 @@ fn parse_templates() {
 
         assert_eq!(
             WgslParser::template_args.parse(&t).unwrap(),
-            Ast([AstNode::Use(VariableSpan((1, 8)))].to_vec())
+            Ast([
+                AstNode::TemplateStart,
+                AstNode::Use(VariableSpan((1, 8))),
+                AstNode::TemplateEnd
+            ]
+            .to_vec())
         );
     }
     {
@@ -81,7 +98,12 @@ fn parse_templates() {
 
         assert_eq!(
             WgslParser::template_args.parse(&t).unwrap(),
-            Ast([AstNode::Use(VariableSpan((1, 4)))].to_vec())
+            Ast([
+                AstNode::TemplateStart,
+                AstNode::Use(VariableSpan((1, 4))),
+                AstNode::TemplateEnd
+            ]
+            .to_vec())
         );
     }
 }
@@ -116,7 +138,9 @@ fn parse_templated_expression() {
             WgslParser::expression.parse(&t),
             Ok(Ast([
                 AstNode::Use(VariableSpan((0, 5))),
+                AstNode::TemplateStart,
                 AstNode::Use(VariableSpan((6, 11))),
+                AstNode::TemplateEnd,
                 AstNode::Use(VariableSpan((18, 22)))
             ]
             .to_vec()))
