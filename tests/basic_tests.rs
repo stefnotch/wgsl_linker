@@ -196,6 +196,7 @@ fn frag_main() -> @location(0) vec4f {
 
 #[test]
 fn parse_atomics() {
+    use PrintableNode::*;
     // Simplified version of https://github.com/bevyengine/naga_oil/blob/master/src/compose/tests/atomics/mod.wgsl
     let source = "var<workgroup> atom: atomic<u32>;
     
@@ -209,15 +210,39 @@ fn start() -> f32 {
     }
     return f32(y);
 }";
-    let parse_result = parse(&source);
-    println!("{:?}", parse_result);
-    assert!(parse_result.is_ok());
-    let parse_result = parse_result.unwrap();
+    let parse_result = parse(&source).unwrap();
     assert_eq!(
         ast_to_printable(&parse_result, &source),
         [
-            PrintableNode::Declare("atom"),
-            // TODO:
+            Declare("atom"),
+            Use("atomic"),
+            TemplateStart,
+            Use("u32"),
+            TemplateEnd,
+            Declare("start"),
+            OpenBlock,
+            Use("f32"),
+            OpenBlock,
+            Use("atomicStore"),
+            Use("atom"),
+            Declare("y"),
+            Use("atomicLoad"),
+            Use("atom"),
+            Use("y"),
+            Use("atomicAdd"),
+            Use("atom"),
+            Declare("exchange"),
+            Use("atomicCompareExchangeWeak"),
+            Use("atom"),
+            Use("exchange"),
+            OpenBlock,
+            Use("y"),
+            Use("exchange"),
+            CloseBlock,
+            Use("f32"),
+            Use("y"),
+            CloseBlock,
+            CloseBlock
         ]
         .to_vec()
     );

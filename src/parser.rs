@@ -332,7 +332,7 @@ impl WgslParser {
                     opt(Self::template_args),
                     // Ambiguity between this and variable_updating_statement needs to be resolved
                     // before cut_err happens
-                    peek(symbol('(')),
+                    peek(paren('(')),
                     cut_err(Self::argument_expression_list)
                         .context(StrContext::Label("function call")),
                 )
@@ -489,22 +489,28 @@ impl WgslParser {
         alt((
             (
                 Self::lhs_expression,
-                cut_err(alt((
-                    preceded(symbol('='), Self::expression),
+                alt((
+                    preceded(symbol('='), cut_err(Self::expression)),
                     // Unambiguous, lhs_expression cannot have a template at the end
-                    preceded((symbol('<'), symbol('<'), symbol('=')), Self::expression),
-                    preceded((symbol('>'), symbol('>'), symbol('=')), Self::expression),
-                    preceded((symbol('%'), symbol('=')), Self::expression),
-                    preceded((symbol('&'), symbol('=')), Self::expression),
-                    preceded((symbol('*'), symbol('=')), Self::expression),
-                    preceded((symbol('+'), symbol('=')), Self::expression),
-                    preceded((symbol('-'), symbol('=')), Self::expression),
-                    preceded((symbol('/'), symbol('=')), Self::expression),
-                    preceded((symbol('^'), symbol('=')), Self::expression),
-                    preceded((symbol('|'), symbol('=')), Self::expression),
+                    preceded(
+                        (symbol('<'), symbol('<'), symbol('=')),
+                        cut_err(Self::expression),
+                    ),
+                    preceded(
+                        (symbol('>'), symbol('>'), symbol('=')),
+                        cut_err(Self::expression),
+                    ),
+                    preceded((symbol('%'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('&'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('*'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('+'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('-'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('/'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('^'), symbol('=')), cut_err(Self::expression)),
+                    preceded((symbol('|'), symbol('=')), cut_err(Self::expression)),
                     (symbol('+'), symbol('+')).default_value(),
                     (symbol('-'), symbol('-')).default_value(),
-                )))
+                ))
                 .context(StrContext::Label("variable updating expression")),
             )
                 .map(|(a, b)| a.join(b)),
@@ -548,7 +554,7 @@ impl WgslParser {
                 Self::ident,
                 opt(Self::template_args),
                 // Ambiguity between this and the Self::global_var branch of variable_or_value_statement
-                peek(symbol('(')),
+                peek(paren('(')),
                 cut_err(Self::argument_expression_list),
             )
                 .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
@@ -564,7 +570,7 @@ impl WgslParser {
                 Self::ident,
                 opt(Self::template_args),
                 // Ambiguity between this and the Self::variable_updating_statement branch
-                peek(symbol('(')),
+                peek(paren('(')),
                 cut_err(Self::argument_expression_list),
             )
                 .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
