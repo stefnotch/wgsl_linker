@@ -1,5 +1,5 @@
 use winnow::{
-    ascii::{digit0, digit1, hex_digit1},
+    ascii::{digit0, digit1, hex_digit0, hex_digit1},
     combinator::{alt, cut_err, dispatch, empty, eof, fail, opt, peek, repeat, terminated, trace},
     error::StrContext,
     token::{any, one_of, take_till, take_while},
@@ -117,7 +117,47 @@ impl Tokenizer {
     }
 
     pub fn word<'a>(input: &mut TokenizerInput<'a>) -> PResult<Token<'a>> {
-        Self::ident_pattern_token.map(Token::Word).parse_next(input)
+        Self::ident_pattern_token
+            .map(|text| {
+                if Self::is_keyword(text) {
+                    Token::Keyword(text)
+                } else {
+                    Token::Word(text)
+                }
+            })
+            .parse_next(input)
+    }
+
+    fn is_keyword(text: &str) -> bool {
+        matches!(
+            text,
+            "alias"
+                | "break"
+                | "case"
+                | "const"
+                | "const_assert"
+                | "continue"
+                | "continuing"
+                | "default"
+                | "diagnostic"
+                | "discard"
+                | "else"
+                | "enable"
+                | "false"
+                | "fn"
+                | "for"
+                | "if"
+                | "let"
+                | "loop"
+                | "override"
+                | "requires"
+                | "return"
+                | "struct"
+                | "switch"
+                | "true"
+                | "var"
+                | "while"
+        )
     }
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {
@@ -139,7 +179,7 @@ impl Tokenizer {
             (
                 one_of(['p', 'P']),
                 opt(one_of(['+', '-'])),
-                digit1,
+                cut_err(digit1),
                 opt(one_of(['f', 'h'])),
             )
                 .void()
@@ -147,7 +187,7 @@ impl Tokenizer {
         }
 
         if start.is_none() {
-            return ('.', digit1, opt(float_postfix))
+            return ('.', hex_digit1, opt(float_postfix))
                 .map(|_| Token::Number)
                 .parse_next(input);
         }
@@ -155,7 +195,7 @@ impl Tokenizer {
         alt((
             one_of(['i', 'u']).void(),
             float_postfix.void(),
-            ('.', digit0, opt(float_postfix)).void(),
+            ('.', hex_digit0, opt(float_postfix)).void(),
             empty,
         ))
         .map(|_| Token::Number)

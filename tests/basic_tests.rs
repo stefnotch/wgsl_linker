@@ -4,6 +4,7 @@ use wgsl_linker_reference::{
     parser_output::{Ast, AstNode, VariableSpan},
     token::SpannedToken,
     tokenizer::Tokenizer,
+    WgslParseError,
 };
 use winnow::Parser;
 
@@ -243,6 +244,56 @@ fn start() -> f32 {
             Use("y"),
             CloseBlock,
             CloseBlock
+        ]
+        .to_vec()
+    );
+}
+
+#[test]
+fn for_loop() {
+    use PrintableNode::*;
+    let source = "
+    for (var i = 0u; i < 10u; i++) {
+        return f32(i);
+    }";
+    let mut t = Tokenizer::tokenize(source).unwrap();
+    let parse_result = WgslParser::statements
+        .parse(&mut t)
+        .map_err(WgslParseError::from)
+        .unwrap();
+    assert_eq!(
+        ast_to_printable(&parse_result, &source),
+        [
+            OpenBlock,
+            Declare("i"),
+            Use("i"),
+            Use("i"),
+            OpenBlock,
+            Use("f32"),
+            Use("i"),
+            CloseBlock,
+            CloseBlock
+        ]
+        .to_vec()
+    );
+}
+
+#[test]
+fn nested_template() {
+    use PrintableNode::*;
+    let source = "alias a = array<vec3<u32>>;";
+    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    assert_eq!(
+        ast_to_printable(&parse_result, &source),
+        [
+            Declare("a"),
+            Use("array"),
+            TemplateStart,
+            Use("vec3"),
+            TemplateStart,
+            Use("u32"),
+            TemplateEnd,
+            TemplateEnd
         ]
         .to_vec()
     );

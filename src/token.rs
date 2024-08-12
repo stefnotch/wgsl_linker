@@ -6,6 +6,7 @@ pub enum Token<'a> {
     Paren(char),
     Number,
     Word(&'a str),
+    Keyword(&'a str),
 }
 
 impl fmt::Debug for SpannedToken<'_> {

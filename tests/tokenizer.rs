@@ -1,8 +1,18 @@
-use wgsl_linker_reference::tokenizer::Tokenizer;
+use wgsl_linker_reference::{token::Token, tokenizer::Tokenizer};
+
+#[test]
+fn floats() {
+    let sources = ["0x0.0", "0x0.0p1", "0xa.bp0h", "0XA.fp+2", "0x.fp0"];
+    for source in sources.iter() {
+        let tokens = Tokenizer::tokenize(source).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token, Token::Number);
+    }
+}
 
 #[test]
 fn tokenizer() {
-    use wgsl_linker_reference::token::Token::{Number, Paren, Symbol, Word};
+    use Token::{Keyword, Number, Paren, Symbol, Word};
     let source = "@binding(0) @group(0) var<uniform> frame : u32;
 @vertex
 fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec4f {
@@ -38,7 +48,7 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
             Paren('('),
             Number,
             Paren(')'),
-            Word("var"),
+            Keyword("var"),
             Symbol('<'),
             Word("uniform"),
             Symbol('>'),
@@ -48,7 +58,7 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
             Symbol(';'),
             Symbol('@'),
             Word("vertex"),
-            Word("fn"),
+            Keyword("fn"),
             Word("vtx_main"),
             Paren('('),
             Symbol('@'),
@@ -69,7 +79,7 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
             Paren(')'),
             Word("vec4f"),
             Paren('{'),
-            Word("const"),
+            Keyword("const"),
             Word("pos"),
             Symbol('='),
             Word("array"),
@@ -99,7 +109,7 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
             Paren(')'),
             Paren(')'),
             Symbol(';'),
-            Word("return"),
+            Keyword("return"),
             Word("vec4f"),
             Paren('('),
             Word("pos"),
@@ -115,7 +125,7 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
             Paren('}'),
             Symbol('@'),
             Word("fragment"),
-            Word("fn"),
+            Keyword("fn"),
             Word("frag_main"),
             Paren('('),
             Paren(')'),
@@ -128,7 +138,7 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
             Paren(')'),
             Word("vec4f"),
             Paren('{'),
-            Word("return"),
+            Keyword("return"),
             Word("vec4"),
             Paren('('),
             Number,
@@ -152,5 +162,4 @@ return vec4(1, sin(f32(frame) / 128), 0, 1);
         ]
         .to_vec()
     );
-    println!("{:?}", tokens);
 }
