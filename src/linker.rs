@@ -1,13 +1,12 @@
-use std::{
-    borrow::Borrow,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexMap;
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use thiserror::Error;
 
 use crate::{
     parse,
+    parsed_module::{GlobalItem, ItemName, ModuleItem, ParsedModule},
     parser_output::Ast,
     rewriter::{Rewriter, Visitor},
     WgslParseError,
@@ -23,42 +22,24 @@ impl ModulePath {
 
 #[derive(Default)]
 pub struct Linker {
-    pub module_names: SlotMap<ModuleKey, ModulePath>,
-    pub modules: SecondaryMap<ModuleKey, ParsedModule>,
+    /// Whenever a module is updated, we generate a new key for it.
+    module_names: SlotMap<ModuleKey, ModulePath>,
+    modules: SecondaryMap<ModuleKey, ParsedModule>,
+}
+
+#[derive(Default)]
+pub struct LinkerCache {
+    compiled_modules: HashMap<ModuleKey, CompiledModule>,
+}
+impl LinkerCache {
+    pub fn new() -> Self {
+        Default::default()
+    }
 }
 
 new_key_type! {
     /// A key for a module in the linker.
     pub struct ModuleKey;
-}
-
-/// The name of an item in a module. Always a single string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ItemName(pub String);
-
-impl Borrow<str> for ItemName {
-    fn borrow(&self) -> &str {
-        &self.0
-    }
-}
-
-/// A reference to an item in a module.
-/// In source code, it is written as `module_name::item_name`.
-pub struct ModuleItem {
-    pub module: ModuleKey,
-    pub name: ItemName,
-}
-
-pub enum GlobalItem {
-    Private,
-    Exported,
-}
-
-pub struct ParsedModule {
-    pub source: String,
-    pub ast: Ast,
-    pub global_items: HashMap<ItemName, GlobalItem>,
-    pub imports: HashMap<ItemName, ModuleItem>,
 }
 
 /// Module compilation is independent of other modules. It only depends on the source code of the module.
@@ -92,7 +73,7 @@ impl Linker {
         let module_key = self.module_names.insert(name);
         let ast = parse(&source)?;
         let global_items = ast.get_global_items(&source);
-        let imports = HashMap::new(); // TODO: ast.get_imports(&source); and strip the import and export statements
+        let imports = IndexMap::new(); // TODO: ast.get_imports(&source); and strip the import and export statements
         self.modules.insert(
             module_key,
             ParsedModule {
@@ -108,6 +89,21 @@ impl Linker {
     pub fn remove_module(&mut self, module: ModuleKey) {
         let _ = self.modules.remove(module);
         let _ = self.module_names.remove(module);
+    }
+
+    /// Add imports to a module. This changes the module key.
+    pub fn add_imports<Imports: IntoIterator<Item = (ItemName, ModuleItem)>>(
+        &mut self,
+        module_key: ModuleKey,
+        imports: Imports,
+    ) -> ModuleKey {
+        let module_path = self.module_names.remove(module_key).unwrap();
+        let mut module = self.modules.remove(module_key).unwrap();
+
+        let new_key = self.module_names.insert(module_path);
+        module.imports.extend(imports);
+        let _ = self.modules.insert(new_key, module);
+        new_key
     }
 
     fn module_name_for_mangling(&self, module: ModuleKey) -> String {
@@ -139,13 +135,55 @@ impl Linker {
         }
     }
 
-    // pub fn compile(&self, entry_point: ModuleKey) -> Result<String, LinkingError> {}
+    pub fn compile(
+        &self,
+        entry_point: ModuleKey,
+        cache: &mut LinkerCache,
+    ) -> Result<String, LinkingError> {
+        let sorted_modules = self.collect_imports(entry_point);
+        // Independently compile each module, order does NOT matter.
+        for module in sorted_modules.iter() {
+            if !cache.compiled_modules.contains_key(module) {
+                let compiled_module = self.compile_single_module(*module)?;
+                cache.compiled_modules.insert(*module, compiled_module);
+            }
+        }
+        // Concatenate all the compiled modules. Entry point comes last.
+        let mut result = String::new();
+        for module in sorted_modules.iter().rev() {
+            result.push_str(&cache.compiled_modules[module].mangled_source);
+            result.push('\n');
+        }
+        Ok(result)
+    }
+
+    /// Pre-order traversal of the import graph.
+    /// Entry point is the first module.
+    fn collect_imports(&self, entry_point: ModuleKey) -> Vec<ModuleKey> {
+        let mut result = vec![];
+        let mut stack = vec![entry_point];
+        let mut seen = HashSet::new();
+        seen.insert(entry_point);
+
+        while let Some(module_key) = stack.pop() {
+            result.push(module_key);
+            // Iterate in reverse order to keep the order of imports
+            let module_imports = self.modules.get(module_key).unwrap().imports.values().rev();
+            for ModuleItem { module, .. } in module_imports {
+                if seen.insert(*module) {
+                    stack.push(*module);
+                }
+            }
+        }
+
+        result
+    }
 }
 
 struct LinkerVisitor<'a> {
     linker: &'a Linker,
     module_key: ModuleKey,
-    imports: &'a HashMap<ItemName, ModuleItem>,
+    imports: &'a IndexMap<ItemName, ModuleItem>,
     global_items: &'a HashMap<ItemName, GlobalItem>,
     /// Keeps track of function scopes. Ignores the top-level scope.
     scoped_items: Vec<HashSet<&'a str>>,
@@ -272,14 +310,16 @@ mod tests {
             )
             .unwrap();
 
-        // Manually inject the import
-        let parsed_bar = linker.modules.get_mut(bar_module).unwrap();
-        parsed_bar.imports.insert(
-            ItemName("uno".to_string()),
-            ModuleItem {
-                module: foo_module,
-                name: ItemName("uno".to_string()),
-            },
+        // Manually add the import
+        let bar_module = linker.add_imports(
+            bar_module,
+            [(
+                ItemName("uno".to_string()),
+                ModuleItem {
+                    module: foo_module,
+                    name: ItemName("uno".to_string()),
+                },
+            )],
         );
 
         assert_eq!(

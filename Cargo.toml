@@ -8,6 +8,7 @@ thiserror = "1.0"
 winnow = { version = "0.6.18" }
 unicode-ident = "1.0"
 slotmap = "1.0"
+indexmap = "2.3.0"
 
 [features]
 default = []

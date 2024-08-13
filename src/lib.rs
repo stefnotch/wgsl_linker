@@ -1,6 +1,7 @@
 // https://www.w3.org/TR/WGSL/#parsing
 
 pub mod linker;
+pub mod parsed_module;
 pub mod parser;
 pub mod parser_output;
 pub mod rewriter;
