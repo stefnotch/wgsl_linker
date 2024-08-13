@@ -89,7 +89,8 @@ impl Tokenizer {
                 // Skip nested comments
             } else {
                 // Skip any other character
-                let _ = cut_err(take_till(1.., ('*', '/')))
+                let _ = any.parse_next(input)?;
+                let _ = cut_err(take_till(0.., ('*', '/')))
                     .context(StrContext::Label("multiline comment"))
                     .parse_next(input)?;
             }

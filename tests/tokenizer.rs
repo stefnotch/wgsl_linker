@@ -1,6 +1,15 @@
 use wgsl_linker_reference::{token::Token, tokenizer::Tokenizer};
 
 #[test]
+fn commments() {
+    let sources = ["/* * */", "/* * / */", "/* /\n* */"];
+    for source in sources.iter() {
+        let tokens = Tokenizer::tokenize(source).unwrap();
+        assert_eq!(tokens, vec![]);
+    }
+}
+
+#[test]
 fn floats() {
     let sources = ["0x0.0", "0x0.0p1", "0xa.bp0h", "0XA.fp+2", "0x.fp0"];
     for source in sources.iter() {

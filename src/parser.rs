@@ -1,6 +1,6 @@
 use winnow::{
     combinator::{
-        alt, cut_err, delimited, dispatch, empty, eof, fail, opt, peek, preceded, repeat,
+        alt, cut_err, delimited, dispatch, empty, eof, fail, not, opt, peek, preceded, repeat,
         separated, seq, terminated,
     },
     error::{
@@ -276,8 +276,9 @@ impl WgslParser {
     fn var_statement(input: &mut Input<'_>) -> PResult<Ast> {
         // Things like var<private> d: f32
         preceded(
-            (keyword("var"), opt(Self::template_args)),
+            keyword("var"),
             (
+                opt(Self::template_args),
                 cut_err(Self::declare_typed_ident)
                     .context(StrContext::Label("variable name and type")),
                 opt(preceded(
@@ -285,7 +286,7 @@ impl WgslParser {
                     cut_err(Self::expression).context(StrContext::Label("variable value")),
                 )),
             )
-                .map(|(a, b)| a.join(b)),
+                .map(|(a, b, c)| a.unwrap_or_default().join(b).join(c)),
         )
         .parse_next(input)
     }
@@ -326,7 +327,8 @@ impl WgslParser {
     pub fn statement(input: &mut Input<'_>) -> PResult<Ast> {
         if let Some(non_attributed_statement) = opt(terminated(
             alt((
-                (keyword("break")).map(|_| Ast::default()),
+                // Ambiguity between break and break if
+                (keyword("break"), peek(not(keyword("if")))).map(|_| Ast::default()),
                 (keyword("continue")).map(|_| Ast::default()),
                 (keyword("const_assert"), Self::expression).map(|(_, a)| a),
                 (keyword("discard")).map(|_| Ast::default()),
@@ -464,7 +466,12 @@ impl WgslParser {
                 ))
                 .context(StrContext::Label("loop continuing block")),
             )
-                .map(|(a, b)| a.join(b)),
+                .map(|(a, b)| {
+                    Ast::single(AstNode::OpenBlock)
+                        .join(a)
+                        .join(b)
+                        .join(Ast::single(AstNode::CloseBlock))
+                }),
         )
         .parse_next(input)
     }

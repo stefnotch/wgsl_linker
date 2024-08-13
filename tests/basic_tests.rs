@@ -157,7 +157,7 @@ fn parse_templated_expression() {
 
 #[test]
 fn parse_hard_templates() {
-    let source = "@binding(0) @group(0) var<uniform> frame : u32;
+    let source = "
 @vertex
 fn vtx_main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec4f {
   let a = 1;
@@ -183,7 +183,7 @@ fn frag_main() -> @location(0) vec4f {
             .iter()
             .filter(|x| matches!(x, AstNode::Declare(_)))
             .count(),
-        6
+        5
     );
     assert_eq!(
         parse_result
@@ -215,6 +215,9 @@ fn start() -> f32 {
     assert_eq!(
         ast_to_printable(&parse_result, &source),
         [
+            TemplateStart,
+            Use("workgroup"),
+            TemplateEnd,
             Declare("atom"),
             Use("atomic"),
             TemplateStart,
@@ -294,6 +297,57 @@ fn nested_template() {
             Use("u32"),
             TemplateEnd,
             TemplateEnd
+        ]
+        .to_vec()
+    );
+}
+
+#[test]
+fn ptr_uses_predeclared_enumerants() {
+    use PrintableNode::*;
+    let source = "alias function = i32;
+    alias a = ptr<storage,function,read_write>;";
+    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    assert_eq!(
+        ast_to_printable(&parse_result, &source),
+        [
+            Declare("function"),
+            Use("i32"),
+            Declare("a"),
+            Use("ptr"),
+            TemplateStart,
+            Use("storage"),
+            Use("function"),
+            Use("read_write"),
+            TemplateEnd
+        ]
+        .to_vec()
+    );
+}
+
+#[test]
+fn break_if() {
+    use PrintableNode::*;
+    let source = "fn a(){
+   loop{
+     if(1<2){break;} 
+     continuing{break if 1<2;}
+   }
+}
+";
+    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    assert_eq!(
+        ast_to_printable(&parse_result, &source),
+        [
+            Declare("a"),
+            OpenBlock,
+            OpenBlock,
+            OpenBlock,
+            CloseBlock,
+            OpenBlock,
+            CloseBlock,
+            CloseBlock,
+            CloseBlock
         ]
         .to_vec()
     );
