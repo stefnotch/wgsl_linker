@@ -2,6 +2,8 @@
 name = "wgsl_linker"
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
+readme = "README.md"
 
 [dependencies]
 thiserror = "1.0"
