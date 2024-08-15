@@ -1,4 +1,4 @@
-use wgsl_linker_reference::linker::{ItemName, Linker, LinkerCache, ModuleItem, ModulePath};
+use wgsl_linker::linker::{ItemName, Linker, LinkerCache, ModuleItem, ModulePath};
 
 #[test]
 fn basic_linking() {

@@ -1,4 +1,4 @@
-use wgsl_linker_reference::parser::{
+use wgsl_linker::parser::{
     Ast, AstNode, SpannedToken, Tokenizer, VariableSpan, WgslParseError, WgslParser,
 };
 use winnow::Parser;

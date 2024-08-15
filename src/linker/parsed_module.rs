@@ -15,6 +15,11 @@ impl ModulePath {
 /// The name of an item in a module. Always a single string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemName(pub String);
+impl ItemName {
+    pub fn new<S: Into<String>>(name: S) -> Self {
+        Self(name.into())
+    }
+}
 
 impl Borrow<str> for ItemName {
     fn borrow(&self) -> &str {

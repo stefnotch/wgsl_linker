@@ -85,6 +85,7 @@ impl Linker {
     }
 
     /// Add imports to a module. This changes the module key.
+    /// It also lets you rename imports.
     pub fn add_imports<Imports: IntoIterator<Item = (ItemName, ModuleItem)>>(
         &mut self,
         module_key: ModuleKey,
