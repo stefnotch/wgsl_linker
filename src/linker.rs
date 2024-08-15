@@ -5,6 +5,7 @@ use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use thiserror::Error;
 
 use crate::{
+    mangling::mangle_name,
     parse,
     parsed_module::{GlobalItem, ItemName, ModuleItem, ParsedModule},
     parser_output::Ast,
@@ -55,11 +56,6 @@ pub enum LinkingError {
     Aggregate(Vec<LinkingError>),
 }
 
-pub struct UnmangledName<'a> {
-    pub module: ModuleKey,
-    pub name: &'a str,
-}
-
 impl Linker {
     pub fn new() -> Self {
         Self::default()
@@ -104,20 +100,6 @@ impl Linker {
         module.imports.extend(imports);
         let _ = self.modules.insert(new_key, module);
         new_key
-    }
-
-    fn module_name_for_mangling(&self, module: ModuleKey) -> String {
-        self.module_names[module].0.join("_")
-    }
-
-    pub fn mangle_name(&self, module: ModuleKey, name: &str) -> String {
-        format!("{}_{}", self.module_name_for_mangling(module), name)
-    }
-    pub fn unmangle_name<'a>(&self, module: ModuleKey, mangled_name: &'a str) -> UnmangledName<'a> {
-        let module_name = self.module_name_for_mangling(module);
-        assert!(mangled_name.starts_with(&module_name));
-        let name = &mangled_name[module_name.len() + "_".len()..];
-        UnmangledName { module, name }
     }
 
     fn compile_single_module(&self, module: ModuleKey) -> Result<CompiledModule, LinkingError> {
@@ -233,7 +215,10 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
                     variable: variable.to_string(),
                 });
             }
-            Some(self.linker.mangle_name(self.module_key, variable))
+            Some(mangle_name(
+                &self.linker.module_names[self.module_key],
+                variable,
+            ))
         }
     }
 
@@ -244,10 +229,13 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
         } else if let Some(ModuleItem { module, name }) = self.imports.get(variable) {
             // Replace imports
             // Notice how this also handles "import cat as dog" renames
-            Some(self.linker.mangle_name(*module, &name.0))
+            Some(mangle_name(&self.linker.module_names[*module], &name.0))
         } else if self.global_items.contains_key(variable) {
             // Mangle all globals
-            Some(self.linker.mangle_name(self.module_key, variable))
+            Some(mangle_name(
+                &self.linker.module_names[self.module_key],
+                variable,
+            ))
         } else {
             // It must be a predeclared item. Don't bother mangling them.
             None

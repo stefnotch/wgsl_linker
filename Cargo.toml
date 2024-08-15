@@ -10,6 +10,10 @@ unicode-ident = "1.0"
 slotmap = "1.0"
 indexmap = "2.3.0"
 
+[dev-dependencies]
+proptest = "1.5.0"
+test-strategy = "0.4.0"
+
 [features]
 default = []
 trace = ["winnow/debug"]
