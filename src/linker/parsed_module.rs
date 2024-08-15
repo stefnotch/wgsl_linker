@@ -28,7 +28,6 @@ impl Borrow<str> for ItemName {
 }
 
 /// A reference to an item in a module.
-/// In source code, it is written as `module_name::item_name`.
 pub struct ModuleItem {
     pub module_path: ModulePath,
     pub name: ItemName,

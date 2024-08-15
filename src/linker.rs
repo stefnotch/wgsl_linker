@@ -13,6 +13,8 @@ pub use mangling::{mangle_name, unmangle_name, write_mangled_name};
 use parsed_module::{GlobalItem, ParsedModule};
 pub use parsed_module::{ItemName, ModuleItem, ModulePath};
 
+/// Links multiple modules together into a single module.
+/// Main entry point of the library.
 #[derive(Default)]
 pub struct Linker {
     /// Whenever a module is updated, we generate a new key for it.
@@ -21,6 +23,7 @@ pub struct Linker {
     module_paths: HashMap<ModulePath, ModuleKey>,
 }
 
+/// A cache for compiled modules. This is useful when linking multiple times, as it avoids reparsing.
 #[derive(Default)]
 pub struct LinkerCache {
     compiled_modules: HashMap<ModuleKey, CompiledModule>,
@@ -45,6 +48,8 @@ pub(crate) struct CompiledModule {
 pub enum LinkingError {
     #[error("the imported item {variable} was redefined")]
     Redefinition { variable: String },
+    #[error("the module {module:?} was not found")]
+    ModuleNotFound { module: ModulePath },
     #[error("multiple errors occurred {0:?}")]
     Aggregate(Vec<LinkingError>),
 }
@@ -54,6 +59,7 @@ impl Linker {
         Self::default()
     }
 
+    /// Adds or updates a module in the linker.
     pub fn insert_module(
         &mut self,
         name: ModulePath,
@@ -77,6 +83,7 @@ impl Linker {
         Ok(module_key)
     }
 
+    /// Removes a module from the linker. On success, returns the module path.
     pub fn remove_module(&mut self, module: ModuleKey) -> Option<ModulePath> {
         let _ = self.modules.remove(module);
         let module_path = self.module_names.remove(module)?;
@@ -84,8 +91,8 @@ impl Linker {
         Some(module_path)
     }
 
-    /// Add imports to a module. This changes the module key.
-    /// It also lets you rename imports.
+    /// Add imports to a module, in the form of (new name, location).
+    /// This changes the module key.
     pub fn add_imports<Imports: IntoIterator<Item = (ItemName, ModuleItem)>>(
         &mut self,
         module_key: ModuleKey,
@@ -116,12 +123,13 @@ impl Linker {
         }
     }
 
+    /// Compile multiple modules into one output file.
     pub fn compile(
         &self,
         entry_point: ModuleKey,
         cache: &mut LinkerCache,
     ) -> Result<String, LinkingError> {
-        let sorted_modules = self.collect_imports(entry_point);
+        let sorted_modules = self.collect_imports(entry_point)?;
         // Independently compile each module, order does NOT matter.
         for module in sorted_modules.iter() {
             if !cache.compiled_modules.contains_key(module) {
@@ -140,7 +148,7 @@ impl Linker {
 
     /// Pre-order traversal of the import graph.
     /// Entry point is the first module.
-    fn collect_imports(&self, entry_point: ModuleKey) -> Vec<ModuleKey> {
+    fn collect_imports(&self, entry_point: ModuleKey) -> Result<Vec<ModuleKey>, LinkingError> {
         let mut result = vec![];
         let mut stack = vec![entry_point];
         let mut seen = HashSet::new();
@@ -149,16 +157,20 @@ impl Linker {
         while let Some(module_key) = stack.pop() {
             result.push(module_key);
             // Iterate in reverse order to keep the order of imports
-            let module_imports = self.modules.get(module_key).unwrap().imports.values().rev();
+            let module_imports = self.modules[module_key].imports.values().rev();
             for ModuleItem { module_path, .. } in module_imports {
-                let module = self.module_paths.get(module_path).unwrap();
+                let module = self.module_paths.get(module_path).ok_or_else(|| {
+                    LinkingError::ModuleNotFound {
+                        module: module_path.clone(),
+                    }
+                })?;
                 if seen.insert(*module) {
                     stack.push(*module);
                 }
             }
         }
 
-        result
+        Ok(result)
     }
 }
 
