@@ -1,15 +1,15 @@
-use wgsl_linker_reference::{
-    parse,
-    parser::WgslParser,
-    parser_output::{Ast, AstNode, VariableSpan},
-    token::SpannedToken,
-    tokenizer::Tokenizer,
-    WgslParseError,
+use wgsl_linker_reference::parser::{
+    Ast, AstNode, SpannedToken, Tokenizer, VariableSpan, WgslParseError, WgslParser,
 };
 use winnow::Parser;
 
 fn tokenize(source: &str) -> Vec<SpannedToken> {
     Tokenizer::tokenize(source).unwrap()
+}
+fn parse(input: &str) -> Result<Ast, WgslParseError> {
+    let tokens = Tokenizer::tokenize(input)?;
+    let ast = WgslParser::parse(&tokens)?;
+    Ok(ast)
 }
 
 #[test]

@@ -6,16 +6,16 @@ use winnow::{
     Located, PResult, Parser,
 };
 
-use crate::{
+use super::{
+    parser_output::WgslParseError,
     token::{SpannedToken, Token},
-    WgslParseError,
 };
 
 pub type TokenizerInput<'a> = Located<&'a str>;
 
 pub struct Tokenizer;
 
-/// Similar in purpose to https://github.com/gfx-rs/wgpu/blob/trunk/naga/src/front/wgsl/parse/lexer.rs
+/// Similar in purpose to [Naga's Lexer](https://github.com/gfx-rs/wgpu/blob/trunk/naga/src/front/wgsl/parse/lexer.rs)
 impl Tokenizer {
     pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, WgslParseError> {
         let input = Located::new(input);

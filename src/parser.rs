@@ -1,3 +1,9 @@
+mod parser_output;
+mod rewriter;
+mod token;
+mod tokenizer;
+
+pub use tokenizer::Tokenizer;
 use winnow::{
     combinator::{
         alt, cut_err, delimited, dispatch, empty, eof, fail, not, opt, peek, preceded, repeat,
@@ -11,37 +17,24 @@ use winnow::{
     PResult, Parser,
 };
 
-use crate::{
-    parser_output::{Ast, AstNode, VariableSpan},
-    token::{SpannedToken, Token},
-    WgslParseError,
-};
+pub use parser_output::{Ast, AstNode, VariableSpan, WgslParseError};
+pub use rewriter::{Rewriter, Visitor};
+pub use token::{SpannedToken, Token};
+
+pub fn parse(input: &str) -> Result<Ast, WgslParseError> {
+    let tokens = Tokenizer::tokenize(input)?;
+    let ast = WgslParser::parse(&tokens)?;
+    Ok(ast)
+}
 
 // winnow::error::TreeError<&'a [SpannedToken<'a>]>
 pub type Input<'a> = &'a [SpannedToken<'a>];
 
-/// A basic parser for the purposes of linking multiple WGSL modules together. It needs to parse
-/// - Identifiers in declarations
-/// - Import statements
-/// - Export statements
-///
-/// It does not need to precisely parse
-/// - Comments
-/// - Template lists https://www.w3.org/TR/WGSL/#template-lists-sec
-/// - Operators
-/// ...
-/// Instead, there it is good enough to parse a simplified superset of WGSL. As long as identifiers
-/// are resolved correctly, the parsing is a success.
+/// A basic parser for the purposes of linking multiple WGSL modules together.
 pub struct WgslParser;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum IsTemplateStart {
-    Yes,
-    Maybe,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum IsTemplateResult {
+enum IsTemplateResult {
     Yes,
     No,
 }
@@ -66,7 +59,7 @@ impl<'a, 'error> core::fmt::Display
         let tokens_at_error = &tokens[offset..];
         let error_message = self.error.inner().to_string();
 
-        match tokens_at_error.get(0) {
+        match tokens_at_error.first() {
             Some(token) => {
                 writeln!(f, "parse error at offset {}.", token.span.0)?;
                 let tokens_before_error = &tokens[offset.saturating_sub(2)..offset];
@@ -111,7 +104,7 @@ impl WgslParser {
 
     pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
         // TODO: Add import statement here
-        let _directives = Self::global_directives
+        Self::global_directives
             .context(StrContext::Label("directives"))
             .parse_next(input)?;
         let declarations = Self::global_decls
@@ -709,7 +702,7 @@ impl WgslParser {
         }
     }
 
-    pub fn maybe_template_expression(input: &mut Input<'_>) -> PResult<(Ast, IsTemplateResult)> {
+    fn maybe_template_expression(input: &mut Input<'_>) -> PResult<(Ast, IsTemplateResult)> {
         let mut ast = Self::unary_expression.parse_next(input)?;
 
         loop {
@@ -874,7 +867,7 @@ impl WgslParser {
         .map(|v: Vec<_>| {
             Ast::from_iter(
                 std::iter::once(Ast::single(AstNode::TemplateStart))
-                    .chain(v.into_iter())
+                    .chain(v)
                     .chain(std::iter::once(Ast::single(AstNode::TemplateEnd))),
             )
         })
@@ -882,7 +875,7 @@ impl WgslParser {
         .parse_next(input)
     }
 
-    pub fn maybe_template_args(input: &mut Input<'_>) -> PResult<(Ast, IsTemplateResult)> {
+    fn maybe_template_args(input: &mut Input<'_>) -> PResult<(Ast, IsTemplateResult)> {
         let _ = symbol('<').parse_next(input)?;
         let (mut ast, is_template) = Self::maybe_template_expression
             .context(StrContext::Label(

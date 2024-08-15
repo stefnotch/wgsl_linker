@@ -1,17 +1,17 @@
+mod mangling;
+mod parsed_module;
+
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use thiserror::Error;
 
-use crate::{
-    mangling::mangle_name,
-    parse,
-    parsed_module::{GlobalItem, ItemName, ModuleItem, ModulePath, ParsedModule},
-    parser_output::Ast,
-    rewriter::{Rewriter, Visitor},
-    WgslParseError,
-};
+use crate::parser::{parse, Ast, WgslParseError};
+use crate::parser::{Rewriter, Visitor};
+pub use mangling::{mangle_name, unmangle_name, write_mangled_name};
+use parsed_module::{GlobalItem, ParsedModule};
+pub use parsed_module::{ItemName, ModuleItem, ModulePath};
 
 #[derive(Default)]
 pub struct Linker {
@@ -243,7 +243,7 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
 }
 
 impl Ast {
-    pub fn get_global_items<'a>(&self, source: &'a str) -> HashMap<ItemName, GlobalItem> {
+    pub fn get_global_items(&self, source: &str) -> HashMap<ItemName, GlobalItem> {
         let mut visitor = GlobalItemsVisitor::default();
         self.visit(source, &mut visitor);
         visitor.items

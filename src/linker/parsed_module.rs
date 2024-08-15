@@ -2,7 +2,7 @@ use std::{borrow::Borrow, collections::HashMap};
 
 use indexmap::IndexMap;
 
-use crate::parser_output::Ast;
+use crate::parser::Ast;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePath(pub Vec<String>);

@@ -1,4 +1,4 @@
-use crate::parser_output::{Ast, AstNode};
+use super::{Ast, AstNode};
 
 pub trait Rewriter<'a> {
     /// Like a sax parser, this will be called for each node in the AST.
