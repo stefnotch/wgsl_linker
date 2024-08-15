@@ -7,25 +7,18 @@ use thiserror::Error;
 use crate::{
     mangling::mangle_name,
     parse,
-    parsed_module::{GlobalItem, ItemName, ModuleItem, ParsedModule},
+    parsed_module::{GlobalItem, ItemName, ModuleItem, ModulePath, ParsedModule},
     parser_output::Ast,
     rewriter::{Rewriter, Visitor},
     WgslParseError,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ModulePath(pub Vec<String>);
-impl ModulePath {
-    pub fn from_slice(slice: &[&str]) -> Self {
-        Self(slice.iter().map(|s| s.to_string()).collect())
-    }
-}
-
 #[derive(Default)]
 pub struct Linker {
     /// Whenever a module is updated, we generate a new key for it.
-    module_names: SlotMap<ModuleKey, ModulePath>,
-    modules: SecondaryMap<ModuleKey, ParsedModule>,
+    modules: SlotMap<ModuleKey, ParsedModule>,
+    module_names: SecondaryMap<ModuleKey, ModulePath>,
+    module_paths: HashMap<ModulePath, ModuleKey>,
 }
 
 #[derive(Default)]
@@ -61,30 +54,34 @@ impl Linker {
         Self::default()
     }
 
-    pub fn add_module_source(
+    pub fn insert_module(
         &mut self,
         name: ModulePath,
         source: String,
     ) -> Result<ModuleKey, WgslParseError> {
-        let module_key = self.module_names.insert(name);
         let ast = parse(&source)?;
         let global_items = ast.get_global_items(&source);
         let imports = IndexMap::new(); // TODO: ast.get_imports(&source); and strip the import and export statements
-        self.modules.insert(
-            module_key,
-            ParsedModule {
-                source,
-                ast,
-                global_items,
-                imports,
-            },
-        );
+        let module_key = self.modules.insert(ParsedModule {
+            source,
+            ast,
+            global_items,
+            imports,
+        });
+
+        self.module_names.insert(module_key, name.clone());
+        if let Some(old_module) = self.module_paths.insert(name.clone(), module_key) {
+            self.remove_module(old_module);
+        }
+
         Ok(module_key)
     }
 
-    pub fn remove_module(&mut self, module: ModuleKey) {
+    pub fn remove_module(&mut self, module: ModuleKey) -> Option<ModulePath> {
         let _ = self.modules.remove(module);
-        let _ = self.module_names.remove(module);
+        let module_path = self.module_names.remove(module)?;
+        let _ = self.module_paths.remove(&module_path);
+        Some(module_path)
     }
 
     /// Add imports to a module. This changes the module key.
@@ -93,12 +90,13 @@ impl Linker {
         module_key: ModuleKey,
         imports: Imports,
     ) -> ModuleKey {
-        let module_path = self.module_names.remove(module_key).unwrap();
         let mut module = self.modules.remove(module_key).unwrap();
+        let module_path = self.module_names.remove(module_key).unwrap();
 
-        let new_key = self.module_names.insert(module_path);
         module.imports.extend(imports);
-        let _ = self.modules.insert(new_key, module);
+        let new_key = self.modules.insert(module);
+        let _ = self.module_names.insert(new_key, module_path.clone());
+        let _ = self.module_paths.insert(module_path, new_key);
         new_key
     }
 
@@ -151,7 +149,8 @@ impl Linker {
             result.push(module_key);
             // Iterate in reverse order to keep the order of imports
             let module_imports = self.modules.get(module_key).unwrap().imports.values().rev();
-            for ModuleItem { module, .. } in module_imports {
+            for ModuleItem { module_path, .. } in module_imports {
+                let module = self.module_paths.get(module_path).unwrap();
                 if seen.insert(*module) {
                     stack.push(*module);
                 }
@@ -226,10 +225,10 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
         if self.is_local(variable) {
             // Keep local variable names
             None
-        } else if let Some(ModuleItem { module, name }) = self.imports.get(variable) {
+        } else if let Some(ModuleItem { module_path, name }) = self.imports.get(variable) {
             // Replace imports
             // Notice how this also handles "import cat as dog" renames
-            Some(mangle_name(&self.linker.module_names[*module], &name.0))
+            Some(mangle_name(module_path, &name.0))
         } else if self.global_items.contains_key(variable) {
             // Mangle all globals
             Some(mangle_name(
@@ -286,13 +285,13 @@ mod tests {
     fn basic_linking() {
         let mut linker = Linker::new();
         let foo_module = linker
-            .add_module_source(
+            .insert_module(
                 ModulePath::from_slice(&["foo"]),
                 "fn uno() -> u32 { return 1; }".to_string(),
             )
             .unwrap();
         let bar_module = linker
-            .add_module_source(
+            .insert_module(
                 ModulePath::from_slice(&["bar"]),
                 "fn dos() -> u32 { return uno() + uno   (); }".to_string(),
             )
@@ -304,7 +303,7 @@ mod tests {
             [(
                 ItemName("uno".to_string()),
                 ModuleItem {
-                    module: foo_module,
+                    module_path: ModulePath::from_slice(&["foo"]),
                     name: ItemName("uno".to_string()),
                 },
             )],

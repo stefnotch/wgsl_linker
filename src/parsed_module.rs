@@ -2,7 +2,15 @@ use std::{borrow::Borrow, collections::HashMap};
 
 use indexmap::IndexMap;
 
-use crate::{linker::ModuleKey, parser_output::Ast};
+use crate::parser_output::Ast;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ModulePath(pub Vec<String>);
+impl ModulePath {
+    pub fn from_slice(slice: &[&str]) -> Self {
+        Self(slice.iter().map(|s| s.to_string()).collect())
+    }
+}
 
 /// The name of an item in a module. Always a single string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -17,7 +25,7 @@ impl Borrow<str> for ItemName {
 /// A reference to an item in a module.
 /// In source code, it is written as `module_name::item_name`.
 pub struct ModuleItem {
-    pub module: ModuleKey,
+    pub module_path: ModulePath,
     pub name: ItemName,
 }
 

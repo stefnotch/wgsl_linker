@@ -1,4 +1,4 @@
-use crate::linker::ModulePath;
+use crate::parsed_module::ModulePath;
 
 pub struct UnmangledName {
     pub module: ModulePath,
