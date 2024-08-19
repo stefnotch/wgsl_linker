@@ -20,9 +20,9 @@
 //!
 //! let bar_module = linker.add_imports(
 //!    bar_module,
-//!   [(ItemName::new("uno"), ModuleItem {
+//!   [(ItemName::new("uno"), ModuleItem::Item {
 //!      module_path: foo_path,
-//!     name: ItemName::new("uno"),
+//!      name: ItemName::new("uno"),
 //!  })],
 //! );
 //!
