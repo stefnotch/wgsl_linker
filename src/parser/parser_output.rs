@@ -1,18 +1,13 @@
+use thiserror::Error;
+use winnow::error::StrContext;
+
+use super::Span;
+
+#[derive(Error, Debug)]
 pub struct WgslParseError {
     pub message: String,
     pub position: usize,
-    pub context: winnow::error::ContextError,
-}
-
-impl std::fmt::Debug for WgslParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "WgslParseError: {}", self.message)?;
-        f.debug_struct("WgslParseError")
-            .field("message", &"...")
-            .field("position", &self.position)
-            .field("context", &self.context)
-            .finish()
-    }
+    pub context: Vec<StrContext>,
 }
 
 impl std::fmt::Display for WgslParseError {
@@ -21,28 +16,36 @@ impl std::fmt::Display for WgslParseError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VariableSpan(pub (usize, usize));
-impl VariableSpan {
-    pub fn range(&self) -> std::ops::Range<usize> {
-        let (start, end) = self.0;
-        start..end
-    }
-
-    pub fn text<'source>(&self, source: &'source str) -> &'source str {
-        let range = self.range();
-        &source[range]
-    }
-}
+pub type VariableSpan = Span;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstNode {
     Declare(VariableSpan),
     Use(VariableSpan),
+    /// A property use, like the `bar` in `foo.bar`.
+    PropertyUse {
+        dot: usize,
+        property: VariableSpan,
+    },
     OpenBlock,
     CloseBlock,
     TemplateStart,
     TemplateEnd,
+    /// Starts an import statement.
+    ImportStart {
+        keyword: Span,
+    },
+    ImportModulePart(VariableSpan),
+    ImportVariable {
+        variable: VariableSpan,
+        alias: Option<VariableSpan>,
+    },
+    ImportStar {
+        alias: Option<VariableSpan>,
+    },
+    ImportEnd {
+        semicolon: usize,
+    },
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]

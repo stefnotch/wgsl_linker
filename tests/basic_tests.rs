@@ -22,9 +22,9 @@ fn translation_unit() {
             .parse(&tokenize(&source))
             .unwrap(),
         Ast(vec![
-            AstNode::Declare(VariableSpan((3, 7))),
+            AstNode::Declare(VariableSpan::new(3, 7)),
             AstNode::OpenBlock,
-            AstNode::Use(VariableSpan((13, 16))),
+            AstNode::Use(VariableSpan::new(13, 16)),
             AstNode::OpenBlock,
             AstNode::CloseBlock,
             AstNode::CloseBlock
@@ -87,7 +87,7 @@ fn parse_templates() {
             WgslParser::template_args.parse(&t).unwrap(),
             Ast([
                 AstNode::TemplateStart,
-                AstNode::Use(VariableSpan((1, 8))),
+                AstNode::Use(VariableSpan::new(1, 8)),
                 AstNode::TemplateEnd
             ]
             .to_vec())
@@ -101,7 +101,7 @@ fn parse_templates() {
             WgslParser::template_args.parse(&t).unwrap(),
             Ast([
                 AstNode::TemplateStart,
-                AstNode::Use(VariableSpan((1, 4))),
+                AstNode::Use(VariableSpan::new(1, 4)),
                 AstNode::TemplateEnd
             ]
             .to_vec())
@@ -129,11 +129,11 @@ fn parse_templated_expression() {
         assert_eq!(
             WgslParser::expression.parse(&t),
             Ok(Ast([
-                AstNode::Use(VariableSpan((0, 5))),
+                AstNode::Use(VariableSpan::new(0, 5)),
                 AstNode::TemplateStart,
-                AstNode::Use(VariableSpan((6, 11))),
+                AstNode::Use(VariableSpan::new(6, 11)),
                 AstNode::TemplateEnd,
-                AstNode::Use(VariableSpan((18, 22)))
+                AstNode::Use(VariableSpan::new(18, 22))
             ]
             .to_vec()))
         );
@@ -146,9 +146,9 @@ fn parse_templated_expression() {
         assert_eq!(
             WgslParser::expression.parse(&t),
             Ok(Ast([
-                AstNode::Use(VariableSpan((0, 5))),
-                AstNode::Use(VariableSpan((6, 11))),
-                AstNode::Use(VariableSpan((27, 31)))
+                AstNode::Use(VariableSpan::new(0, 5)),
+                AstNode::Use(VariableSpan::new(6, 11)),
+                AstNode::Use(VariableSpan::new(27, 31))
             ]
             .to_vec()))
         );
@@ -365,6 +365,17 @@ enum PrintableNode<'a> {
     TemplateEnd,
     OpenBlock,
     CloseBlock,
+    PropertyUse(&'a str),
+    ImportStart,
+    ImportModulePart(&'a str),
+    ImportVariable {
+        variable: &'a str,
+        alias: Option<&'a str>,
+    },
+    ImportStar {
+        alias: Option<&'a str>,
+    },
+    ImportEnd,
 }
 
 fn ast_to_printable<'a>(ast: &Ast, source: &'a str) -> Vec<PrintableNode<'a>> {
@@ -377,6 +388,19 @@ fn ast_to_printable<'a>(ast: &Ast, source: &'a str) -> Vec<PrintableNode<'a>> {
             AstNode::TemplateEnd => PrintableNode::TemplateEnd,
             AstNode::OpenBlock => PrintableNode::OpenBlock,
             AstNode::CloseBlock => PrintableNode::CloseBlock,
+            AstNode::PropertyUse { property, .. } => {
+                PrintableNode::PropertyUse(property.text(source))
+            }
+            AstNode::ImportStart { .. } => PrintableNode::ImportStart,
+            AstNode::ImportModulePart(v) => PrintableNode::ImportModulePart(v.text(source)),
+            AstNode::ImportVariable { variable, alias } => PrintableNode::ImportVariable {
+                variable: variable.text(source),
+                alias: alias.map(|v| v.text(source)),
+            },
+            AstNode::ImportStar { alias } => PrintableNode::ImportStar {
+                alias: alias.map(|v| v.text(source)),
+            },
+            AstNode::ImportEnd { .. } => PrintableNode::ImportEnd,
         })
         .collect()
 }

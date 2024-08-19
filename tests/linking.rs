@@ -22,7 +22,7 @@ fn basic_linking() {
         bar_module,
         [(
             ItemName("uno".to_string()),
-            ModuleItem {
+            ModuleItem::Item {
                 module_path: ModulePath::from_slice(&["foo"]),
                 name: ItemName("uno".to_string()),
             },

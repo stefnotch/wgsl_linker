@@ -7,7 +7,9 @@ use indexmap::IndexMap;
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use thiserror::Error;
 
-use crate::parser::{parse, Ast, WgslParseError};
+use crate::parser::{
+    parse, Ast, AstNode, PropertiesIter, RewriteAction, VariableRewriteAction, WgslParseError,
+};
 use crate::parser::{Rewriter, Visitor};
 pub use mangling::{mangle_name, unmangle_name, write_mangled_name};
 use parsed_module::{GlobalItem, ParsedModule};
@@ -50,8 +52,18 @@ pub enum LinkingError {
     Redefinition { variable: String },
     #[error("the module {module:?} was not found")]
     ModuleNotFound { module: ModulePath },
+    #[error("module {module:?} usage expects a variable")]
+    MissingVariable { module: ModulePath },
     #[error("multiple errors occurred {0:?}")]
     Aggregate(Vec<LinkingError>),
+}
+
+#[derive(Error, Debug)]
+pub enum AddModuleError {
+    #[error(transparent)]
+    ParseError(#[from] WgslParseError),
+    #[error(transparent)]
+    LinkingError(#[from] LinkingError),
 }
 
 impl Linker {
@@ -64,10 +76,10 @@ impl Linker {
         &mut self,
         name: ModulePath,
         source: String,
-    ) -> Result<ModuleKey, WgslParseError> {
+    ) -> Result<ModuleKey, AddModuleError> {
         let ast = parse(&source)?;
         let global_items = ast.get_global_items(&source);
-        let imports = IndexMap::new(); // TODO: ast.get_imports(&source); and strip the import and export statements
+        let imports = ast.get_imports(&source)?;
         let module_key = self.modules.insert(ParsedModule {
             source,
             ast,
@@ -157,8 +169,12 @@ impl Linker {
         while let Some(module_key) = stack.pop() {
             result.push(module_key);
             // Iterate in reverse order to keep the order of imports
-            let module_imports = self.modules[module_key].imports.values().rev();
-            for ModuleItem { module_path, .. } in module_imports {
+            let module_imports = self.modules[module_key]
+                .imports
+                .values()
+                .rev()
+                .map(ModuleItem::module_path);
+            for module_path in module_imports {
                 let module = self.module_paths.get(module_path).ok_or_else(|| {
                     LinkingError::ModuleNotFound {
                         module: module_path.clone(),
@@ -215,11 +231,11 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
         self.scoped_items.pop();
     }
 
-    fn declare(&mut self, variable: &'a str) -> Option<String> {
+    fn declare(&mut self, variable: &'a str) -> RewriteAction {
         if let Some(local_scope) = self.scoped_items.last_mut() {
             // Variables in inner scopes can shadow outer variables.
             local_scope.insert(variable);
-            None
+            RewriteAction::Keep
         } else {
             // Global scope!
             if self.imports.contains_key(variable) {
@@ -227,65 +243,144 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
                     variable: variable.to_string(),
                 });
             }
-            Some(mangle_name(
+            RewriteAction::Replace(mangle_name(
                 &self.linker.module_names[self.module_key],
                 variable,
             ))
         }
     }
 
-    fn use_variable(&mut self, variable: &'a str) -> Option<String> {
+    fn use_variable(
+        &mut self,
+        variable: &'a str,
+        mut properties: PropertiesIter<'a, '_>,
+    ) -> VariableRewriteAction {
         if self.is_local(variable) {
             // Keep local variable names
-            None
-        } else if let Some(ModuleItem { module_path, name }) = self.imports.get(variable) {
+            VariableRewriteAction::Keep
+        } else if let Some(module_item) = self.imports.get(variable) {
             // Replace imports
             // Notice how this also handles "import cat as dog" renames
-            Some(mangle_name(module_path, &name.0))
+            match module_item {
+                ModuleItem::Item { module_path, name } => {
+                    VariableRewriteAction::ReplaceVariable(mangle_name(module_path, &name.0))
+                }
+                ModuleItem::AllItems(module_path) => {
+                    // The syntax after a star import is "module.variable"
+                    match properties.next() {
+                        Some(name) => {
+                            // properties can still contain values,
+                            // because it is ok for a property access to happen after the variable name.
+                            VariableRewriteAction::ReplaceVariable(mangle_name(module_path, &name))
+                        }
+                        None => {
+                            self.errors.push(LinkingError::MissingVariable {
+                                module: module_path.clone(),
+                            });
+                            VariableRewriteAction::Keep
+                        }
+                    }
+                }
+            }
         } else if self.global_items.contains_key(variable) {
             // Mangle all globals
-            Some(mangle_name(
+            VariableRewriteAction::ReplaceVariable(mangle_name(
                 &self.linker.module_names[self.module_key],
                 variable,
             ))
         } else {
             // It must be a predeclared item. Don't bother mangling them.
-            None
+            VariableRewriteAction::Keep
         }
     }
 }
 
 impl Ast {
     pub fn get_global_items(&self, source: &str) -> HashMap<ItemName, GlobalItem> {
-        let mut visitor = GlobalItemsVisitor::default();
+        let mut items = HashMap::new();
+        let mut block_level = 0;
+        for node in &self.0 {
+            match node {
+                AstNode::OpenBlock => block_level += 1,
+                AstNode::CloseBlock => block_level -= 1,
+                AstNode::Declare(var) if block_level == 0 => {
+                    items.insert(ItemName(var.text(source).to_string()), GlobalItem::Exported);
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(block_level, 0);
+        items
+    }
+
+    pub fn get_imports(
+        &self,
+        source: &str,
+    ) -> Result<IndexMap<ItemName, ModuleItem>, LinkingError> {
+        #[derive(Default)]
+        struct ImportVisitor<'a> {
+            items: IndexMap<ItemName, ModuleItem>,
+            module_parts: Vec<&'a str>,
+            block_stack: Vec<usize>,
+            errors: Vec<LinkingError>,
+        }
+
+        impl<'a> Visitor<'a> for ImportVisitor<'a> {
+            fn import_start(&mut self) {
+                assert!(self.module_parts.is_empty());
+                assert!(self.block_stack.is_empty());
+            }
+            fn import_module_part(&mut self, part: &'a str) {
+                self.module_parts.push(part);
+            }
+            fn open_block(&mut self) {
+                self.block_stack.push(self.module_parts.len());
+            }
+            fn close_block(&mut self) {
+                let len = self.block_stack.pop().unwrap();
+                self.module_parts.truncate(len);
+            }
+            fn import_star(&mut self, alias: Option<&'a str>) {
+                let alias = alias.unwrap_or_else(|| self.module_parts.last().unwrap());
+                let module_items = ModuleItem::AllItems(ModulePath(
+                    self.module_parts.iter().map(|v| v.to_string()).collect(),
+                ));
+                let old_value = self.items.insert(ItemName(alias.to_string()), module_items);
+                if old_value.is_some() {
+                    self.errors.push(LinkingError::Redefinition {
+                        variable: alias.to_string(),
+                    });
+                }
+            }
+            fn import_variable(&mut self, variable: &'a str, alias: Option<&'a str>) {
+                let alias = alias.unwrap_or_else(|| variable);
+                let module_items = ModuleItem::Item {
+                    module_path: ModulePath(
+                        self.module_parts.iter().map(|v| v.to_string()).collect(),
+                    ),
+                    name: ItemName(variable.to_string()),
+                };
+                let old_value = self.items.insert(ItemName(alias.to_string()), module_items);
+                if old_value.is_some() {
+                    self.errors.push(LinkingError::Redefinition {
+                        variable: alias.to_string(),
+                    });
+                }
+            }
+            fn import_end(&mut self) {
+                self.module_parts.clear();
+                assert!(self.block_stack.is_empty());
+            }
+        }
+
+        let mut visitor = ImportVisitor::default();
         self.visit(source, &mut visitor);
-        visitor.items
-    }
-}
-
-#[derive(Default)]
-struct GlobalItemsVisitor {
-    items: HashMap<ItemName, GlobalItem>,
-    block_level: usize,
-}
-
-impl<'a> Visitor<'a> for GlobalItemsVisitor {
-    fn open_block(&mut self) {
-        self.block_level += 1;
-    }
-
-    fn close_block(&mut self) {
-        self.block_level -= 1;
-    }
-
-    fn declare(&mut self, variable: &'a str) {
-        if self.block_level == 0 {
-            self.items
-                .insert(ItemName(variable.to_string()), GlobalItem::Exported);
+        if visitor.errors.is_empty() {
+            Ok(visitor.items)
+        } else {
+            Err(LinkingError::Aggregate(visitor.errors))
         }
     }
-
-    fn use_variable(&mut self, _variable: &str) {}
 }
 
 #[cfg(test)]
@@ -315,7 +410,7 @@ mod tests {
             bar_module,
             [(
                 ItemName("uno".to_string()),
-                ModuleItem {
+                ModuleItem::Item {
                     module_path: ModulePath::from_slice(&["foo"]),
                     name: ItemName("uno".to_string()),
                 },

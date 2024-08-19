@@ -1,8 +1,11 @@
+pub mod ast_iter;
 mod parser_output;
 mod rewriter;
+mod span;
 mod token;
 mod tokenizer;
 
+pub use span::Span;
 pub use tokenizer::Tokenizer;
 use winnow::{
     combinator::{
@@ -18,7 +21,7 @@ use winnow::{
 };
 
 pub use parser_output::{Ast, AstNode, VariableSpan, WgslParseError};
-pub use rewriter::{Rewriter, Visitor};
+pub use rewriter::{PropertiesIter, RewriteAction, Rewriter, VariableRewriteAction, Visitor};
 pub use token::{SpannedToken, Token};
 
 pub fn parse(input: &str) -> Result<Ast, WgslParseError> {
@@ -61,7 +64,7 @@ impl<'a, 'error> core::fmt::Display
 
         match tokens_at_error.first() {
             Some(token) => {
-                writeln!(f, "parse error at offset {}.", token.span.0)?;
+                writeln!(f, "parse error at offset {}.", token.span.start)?;
                 let tokens_before_error = &tokens[offset.saturating_sub(2)..offset];
                 let tokens_after_error = &tokens[offset..(offset + 5).min(tokens.len())];
                 let mut tokens_before_text = String::new();
@@ -88,11 +91,12 @@ impl<'a> From<ParseError<&'a [SpannedToken<'a>], ContextError>> for WgslParseErr
     fn from(error: ParseError<&'a [SpannedToken<'a>], ContextError>) -> Self {
         let position = error.offset();
         let message = (DisplayParseError { error: &error }).to_string();
+        let context = error.into_inner().context().cloned().collect();
 
         WgslParseError {
             message,
             position,
-            context: error.into_inner(),
+            context,
         }
     }
 }
@@ -943,7 +947,7 @@ impl WgslParser {
 
     pub fn ident(input: &mut Input<'_>) -> PResult<VariableSpan> {
         any.verify_map(|v: SpannedToken<'_>| match v.token {
-            Token::Word(_) => Some(VariableSpan(v.span)),
+            Token::Word(_) => Some(v.span),
             _ => None,
         })
         .parse_next(input)

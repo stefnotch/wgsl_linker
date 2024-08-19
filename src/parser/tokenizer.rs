@@ -23,7 +23,7 @@ impl Tokenizer {
         result.map_err(|e| WgslParseError {
             message: e.to_string(),
             position: e.offset(),
-            context: e.into_inner(),
+            context: e.into_inner().context().cloned().collect(),
         })
     }
 

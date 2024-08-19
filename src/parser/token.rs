@@ -1,5 +1,7 @@
 use std::{fmt, ops::Range};
 
+use super::Span;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Token<'a> {
     Symbol(char),
@@ -18,13 +20,13 @@ impl fmt::Debug for SpannedToken<'_> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct SpannedToken<'a> {
     pub token: Token<'a>,
-    pub span: (usize, usize),
+    pub span: Span,
 }
 impl<'a> From<(Token<'a>, Range<usize>)> for SpannedToken<'a> {
     fn from((token, span): (Token<'a>, Range<usize>)) -> Self {
         Self {
             token,
-            span: (span.start, span.end),
+            span: span.into(),
         }
     }
 }

@@ -27,10 +27,21 @@ impl Borrow<str> for ItemName {
     }
 }
 
-/// A reference to an item in a module.
-pub struct ModuleItem {
-    pub module_path: ModulePath,
-    pub name: ItemName,
+/// A reference to items in a module.
+pub enum ModuleItem {
+    Item {
+        module_path: ModulePath,
+        name: ItemName,
+    },
+    AllItems(ModulePath),
+}
+impl ModuleItem {
+    pub fn module_path(&self) -> &ModulePath {
+        match self {
+            ModuleItem::Item { module_path, .. } => module_path,
+            ModuleItem::AllItems(module_path) => module_path,
+        }
+    }
 }
 
 pub enum GlobalItem {
