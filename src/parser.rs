@@ -1,4 +1,3 @@
-pub mod ast_iter;
 mod parser_output;
 mod rewriter;
 mod span;
