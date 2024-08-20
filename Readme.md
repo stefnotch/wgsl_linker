@@ -8,6 +8,8 @@ This is a straightforward implementation of the [WGSL importing specification](h
 
 ## Example
 
+Write WGSL+ code like
+
 ```wgsl
 // common.wgsl
 struct EncodedPatch { u: u32, v: u32 };
@@ -30,6 +32,10 @@ fn main(@builtin(workgroup_id) workgroup_id : vec3<u32>) {
     let quad = patch_decode(patches_from_buffer.patches[patch_index]);
 }
 ```
+
+and then point the wgsl_linker at your code!
+
+TODO: How? Example please.
 
 ## Running
 
