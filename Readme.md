@@ -8,7 +8,7 @@ This is a straightforward implementation of the [WGSL importing specification](h
 
 ## Example
 
-Write WGSL+ code like
+Write WGSL+ code such as
 
 ```wgsl
 // common.wgsl
