@@ -271,7 +271,7 @@ impl WgslParser {
                     1..,
                     (
                         Self::attributes,
-                        (Self::word, must_symbol(':')),
+                        (Self::ident.void(), must_symbol(':')),
                         Self::type_specifier,
                     )
                         .map(|(a, _, b)| a.join(b)),
@@ -1048,14 +1048,6 @@ impl WgslParser {
     pub fn ident(input: &mut Input<'_>) -> PResult<VariableSpan> {
         any.verify_map(|v: SpannedToken<'_>| match v.token {
             Token::Word(_) => Some(v.span),
-            _ => None,
-        })
-        .parse_next(input)
-    }
-
-    pub fn word<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
-        any.verify_map(|v: SpannedToken<'a>| match v.token {
-            Token::Word(a) => Some(a),
             _ => None,
         })
         .parse_next(input)
