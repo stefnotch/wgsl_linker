@@ -19,5 +19,3 @@ cargo watch -x test
 ## TODO
 
 - Source Maps https://github.com/kaleidawave/source-map
-- Import statements
-- Qualified names

@@ -106,7 +106,9 @@ impl WgslParser {
     }
 
     pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
-        // TODO: Add import statement here
+        let imports = Self::imports
+            .context(StrContext::Label("imports"))
+            .parse_next(input)?;
         Self::global_directives
             .context(StrContext::Label("directives"))
             .parse_next(input)?;
@@ -117,7 +119,80 @@ impl WgslParser {
             .context(StrContext::Label("end of WGSL file"))
             .parse_next(input)?;
 
-        Ok(declarations.into_iter().collect())
+        Ok(imports
+            .into_iter()
+            .chain(declarations.into_iter())
+            .collect())
+    }
+
+    pub fn imports(input: &mut Input<'_>) -> PResult<Vec<Ast>> {
+        repeat(0.., Self::import).parse_next(input)
+    }
+
+    pub fn import(input: &mut Input<'_>) -> PResult<Ast> {
+        preceded(word("import"), cut_err(Self::import_path))
+            .context(StrContext::Label("import statement"))
+            .parse_next(input)
+    }
+
+    fn import_path(input: &mut Input<'_>) -> PResult<Ast> {
+        let parts = repeat(
+            1..,
+            terminated(
+                alt((
+                    symbol_pair(['.', '.']).map(|_| AstNode::ImportDotDotPart),
+                    symbol('.').map(|_| AstNode::ImportDotPart),
+                    Self::ident.map(|v| AstNode::ImportModulePart(v)),
+                )),
+                symbol('/'),
+            ),
+        )
+        .map(|v: Vec<_>| v.into_iter().collect::<Ast>())
+        .verify(|v| matches!(v.0.last(), Some(&AstNode::ImportModulePart(_))))
+        .parse_next(input)?;
+        let end = alt((
+            Self::import_collection,
+            Self::item_import,
+            Self::star_import,
+        ))
+        .parse_next(input)?;
+        Ok(parts.join(end))
+    }
+
+    fn import_collection(input: &mut Input<'_>) -> PResult<Ast> {
+        parens(
+            '{',
+            cut_err(comma_separated(
+                1..,
+                alt((Self::import_path, Self::item_import)),
+            ))
+            .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+            '}',
+        )
+        .context(StrContext::Label("import collection"))
+        .parse_next(input)
+    }
+
+    fn star_import(input: &mut Input<'_>) -> PResult<Ast> {
+        preceded(
+            symbol('*'),
+            opt(preceded(word("as"), cut_err(Self::ident)))
+                .context(StrContext::Label("import alias")),
+        )
+        .context(StrContext::Label("star import"))
+        .map(|alias| Ast::single(AstNode::ImportStar { alias }))
+        .parse_next(input)
+    }
+
+    fn item_import(input: &mut Input<'_>) -> PResult<Ast> {
+        (
+            Self::ident,
+            opt(preceded(word("as"), cut_err(Self::ident)))
+                .context(StrContext::Label("import alias")),
+        )
+            .context(StrContext::Label("item import"))
+            .map(|(variable, alias)| Ast::single(AstNode::ImportVariable { variable, alias }))
+            .parse_next(input)
     }
 
     /// We don't verify the global_directives rules.
@@ -178,18 +253,18 @@ impl WgslParser {
 
     fn continue_global_alias(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
-            cut_err(Self::ident).context(StrContext::Label("alias name")),
+            cut_err(Self::declare_ident).context(StrContext::Label("alias name")),
             _: must_symbol('='),
             cut_err(Self::type_specifier).context(StrContext::Label("alias type")),
             _: must_symbol(';'),
         )
-        .map(|(a, c)| Ast::single(AstNode::Declare(a)).join(c))
+        .map(|(a, c)| a.join(c))
         .parse_next(input)
     }
 
     fn continue_global_struct(input: &mut Input<'_>) -> PResult<Ast> {
         (
-            cut_err(Self::ident).context(StrContext::Label("struct name")),
+            cut_err(Self::declare_ident).context(StrContext::Label("struct name")),
             cut_err(parens(
                 '{',
                 comma_separated(
@@ -206,7 +281,7 @@ impl WgslParser {
             ))
             .context(StrContext::Label("struct body")),
         )
-            .map(|(a, b)| Ast::single(AstNode::Declare(a)).join(b))
+            .map(|(a, b)| a.join(b))
             .parse_next(input)
     }
 
@@ -223,7 +298,7 @@ impl WgslParser {
 
     fn global_fn(input: &mut Input<'_>) -> PResult<Ast> {
         let _ = keyword("fn").parse_next(input)?;
-        let name = cut_err(Self::ident)
+        let name = cut_err(Self::declare_ident)
             .context(StrContext::Label("function name"))
             .parse_next(input)?;
 
@@ -247,7 +322,7 @@ impl WgslParser {
             .context(StrContext::Label("function body"))
             .parse_next(input)?;
 
-        Ok(Ast::single(AstNode::Declare(name))
+        Ok(name
             .join(Ast::single(AstNode::OpenBlock))
             .join(params)
             .join(return_type)
@@ -258,11 +333,11 @@ impl WgslParser {
     fn fn_param(input: &mut Input<'_>) -> PResult<Ast> {
         seq!(
             Self::attributes,
-            Self::ident,
+            Self::declare_ident,
             cut_err(preceded(must_symbol(':'), Self::type_specifier))
                 .context(StrContext::Label("function parameter type")),
         )
-        .map(|(a, b, c)| a.join(Ast::single(AstNode::Declare(b))).join(c))
+        .map(|(a, b, c)| a.join(b).join(c))
         .parse_next(input)
     }
 
@@ -330,7 +405,7 @@ impl WgslParser {
                 (keyword("discard")).map(|_| Ast::default()),
                 (keyword("return"), opt(Self::expression)).map(|(_, a)| a.unwrap_or_default()),
                 (
-                    Self::ident,
+                    Self::use_qualified_ident,
                     opt(Self::template_args),
                     // Ambiguity between this and variable_updating_statement needs to be resolved
                     // before cut_err happens
@@ -338,7 +413,7 @@ impl WgslParser {
                     cut_err(Self::argument_expression_list)
                         .context(StrContext::Label("function call")),
                 )
-                    .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                    .map(|(a, b, _, c)| a.join(b).join(c)),
                 Self::variable_or_value_statement,
                 Self::variable_updating_statement,
             )),
@@ -531,8 +606,7 @@ impl WgslParser {
 
     pub fn lhs_expression(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
-            (Self::ident, opt(Self::component_or_swizzle_specifier))
-                .map(|(a, b)| Ast::single(AstNode::Use(a)).join(b)),
+            (Self::use_ident, opt(Self::component_or_swizzle_specifier)).map(|(a, b)| a.join(b)),
             (
                 parens(
                     '(',
@@ -558,13 +632,13 @@ impl WgslParser {
     pub fn for_init(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
             (
-                Self::ident,
+                Self::use_qualified_ident,
                 opt(Self::template_args),
                 // Ambiguity between this and variable_updating_statement
                 peek(paren('(')),
                 cut_err(Self::argument_expression_list),
             )
-                .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                .map(|(a, b, _, c)| a.join(b).join(c)),
             Self::variable_or_value_statement,
             Self::variable_updating_statement,
         ))
@@ -574,13 +648,13 @@ impl WgslParser {
     pub fn for_update(input: &mut Input<'_>) -> PResult<Ast> {
         alt((
             (
-                Self::ident,
+                Self::use_qualified_ident,
                 opt(Self::template_args),
                 // Ambiguity between this and the Self::variable_updating_statement branch
                 peek(paren('(')),
                 cut_err(Self::argument_expression_list),
             )
-                .map(|(a, b, _, c)| Ast::single(AstNode::Use(a)).join(b).join(c)),
+                .map(|(a, b, _, c)| a.join(b).join(c)),
             Self::variable_updating_statement,
         ))
         .parse_next(input)
@@ -611,18 +685,18 @@ impl WgslParser {
     /// A optionally_typed_ident that leads to a variable declaration.
     pub fn declare_typed_ident(input: &mut Input<'_>) -> PResult<Ast> {
         (
-            Self::ident,
+            Self::declare_ident,
             opt(preceded(symbol(':'), Self::type_specifier)),
         )
-            .map(|(a, b)| Ast::single(AstNode::Declare(a)).join(b))
+            .map(|(a, b)| a.join(b))
             .parse_next(input)
     }
 
     pub fn type_specifier(input: &mut Input<'_>) -> PResult<Ast> {
         // Unambiguous, except for the fact that template_args can contain expressions
-        (Self::ident, opt(Self::template_args))
+        (Self::use_qualified_ident, opt(Self::template_args))
             .context(StrContext::Label("type specifier"))
-            .map(|(a, b)| Ast::single(AstNode::Use(a)).join(b))
+            .map(|(a, b)| a.join(b))
             .parse_next(input)
     }
 
@@ -830,7 +904,7 @@ impl WgslParser {
     }
 
     pub fn primary_expression(input: &mut Input<'_>) -> PResult<Ast> {
-        if let Some(ident) = opt(Self::ident).parse_next(input)? {
+        if let Some(ident) = opt(Self::use_qualified_ident).parse_next(input)? {
             // This one is ambiguous, because it could either
             // - be a template or
             // - be skipped and be a less than operator
@@ -845,9 +919,7 @@ impl WgslParser {
                 _ => None,
             };
 
-            Ok(Ast::single(AstNode::Use(ident))
-                .join(template_args.map(|v| v.0))
-                .join(arguments))
+            Ok(ident.join(template_args.map(|v| v.0)).join(arguments))
         } else {
             alt((
                 Self::literal.default_value::<Ast>(),
@@ -927,11 +999,14 @@ impl WgslParser {
     pub fn component_or_swizzle_specifier(input: &mut Input<'_>) -> PResult<Ast> {
         (
             alt((
-                (
-                    symbol('.'),
-                    cut_err(Self::word).context(StrContext::Label("property access or swizzle")),
-                )
-                    .default_value::<Ast>(),
+                (symbol('.'), cut_err(Self::ident))
+                    .context(StrContext::Label("property access or swizzle"))
+                    .map(|(dot, property)| {
+                        Ast::single(AstNode::PropertyUse {
+                            dot: dot.span.start,
+                            property,
+                        })
+                    }),
                 parens(
                     '[',
                     cut_err(Self::expression).context(StrContext::Label("nested expression")),
@@ -941,6 +1016,32 @@ impl WgslParser {
             opt(Self::component_or_swizzle_specifier),
         )
             .map(|(a, b)| a.join(b))
+            .parse_next(input)
+    }
+
+    pub fn use_qualified_ident(input: &mut Input<'_>) -> PResult<Ast> {
+        (
+            Self::use_ident,
+            opt((symbol('.'), Self::ident).map(|(dot, property)| {
+                Ast::single(AstNode::PropertyUse {
+                    dot: dot.span.start,
+                    property,
+                })
+            })),
+        )
+            .map(|(a, b)| a.join(b))
+            .parse_next(input)
+    }
+
+    pub fn use_ident(input: &mut Input<'_>) -> PResult<Ast> {
+        Self::ident
+            .map(|v| Ast::single(AstNode::Use(v)))
+            .parse_next(input)
+    }
+
+    pub fn declare_ident(input: &mut Input<'_>) -> PResult<Ast> {
+        Self::ident
+            .map(|v| Ast::single(AstNode::Declare(v)))
             .parse_next(input)
     }
 
@@ -959,6 +1060,12 @@ impl WgslParser {
         })
         .parse_next(input)
     }
+}
+
+fn word(
+    a: &str,
+) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ContextError> {
+    token_kind(Token::Word(a))
 }
 
 fn keyword(

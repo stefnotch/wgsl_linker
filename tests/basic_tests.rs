@@ -239,9 +239,11 @@ fn start() -> f32 {
             Use("atomicCompareExchangeWeak"),
             Use("atom"),
             Use("exchange"),
+            PropertyUse("exchanged"),
             OpenBlock,
             Use("y"),
             Use("exchange"),
+            PropertyUse("old_value"),
             CloseBlock,
             Use("f32"),
             Use("y"),
@@ -393,6 +395,8 @@ fn ast_to_printable<'a>(ast: &Ast, source: &'a str) -> Vec<PrintableNode<'a>> {
             }
             AstNode::ImportStart { .. } => PrintableNode::ImportStart,
             AstNode::ImportModulePart(v) => PrintableNode::ImportModulePart(v.text(source)),
+            AstNode::ImportDotPart => PrintableNode::ImportModulePart("."),
+            AstNode::ImportDotDotPart => PrintableNode::ImportModulePart(".."),
             AstNode::ImportVariable { variable, alias } => PrintableNode::ImportVariable {
                 variable: variable.text(source),
                 alias: alias.map(|v| v.text(source)),

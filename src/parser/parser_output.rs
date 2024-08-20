@@ -36,6 +36,8 @@ pub enum AstNode {
         keyword: Span,
     },
     ImportModulePart(VariableSpan),
+    ImportDotPart,
+    ImportDotDotPart,
     ImportVariable {
         variable: VariableSpan,
         alias: Option<VariableSpan>,

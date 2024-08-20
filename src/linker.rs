@@ -325,6 +325,14 @@ impl Ast {
             errors: Vec<LinkingError>,
         }
 
+        impl<'a> ImportVisitor<'a> {
+            fn get_module_path(&self) -> ModulePath {
+                let last_part = *self.module_parts.last().unwrap();
+                assert!(last_part != "." && last_part != "..");
+                ModulePath(self.module_parts.iter().map(|v| v.to_string()).collect())
+            }
+        }
+
         impl<'a> Visitor<'a> for ImportVisitor<'a> {
             fn import_start(&mut self) {
                 assert!(self.module_parts.is_empty());
@@ -342,9 +350,7 @@ impl Ast {
             }
             fn import_star(&mut self, alias: Option<&'a str>) {
                 let alias = alias.unwrap_or_else(|| self.module_parts.last().unwrap());
-                let module_items = ModuleItem::AllItems(ModulePath(
-                    self.module_parts.iter().map(|v| v.to_string()).collect(),
-                ));
+                let module_items = ModuleItem::AllItems(self.get_module_path());
                 let old_value = self.items.insert(ItemName(alias.to_string()), module_items);
                 if old_value.is_some() {
                     self.errors.push(LinkingError::Redefinition {
@@ -355,9 +361,7 @@ impl Ast {
             fn import_variable(&mut self, variable: &'a str, alias: Option<&'a str>) {
                 let alias = alias.unwrap_or_else(|| variable);
                 let module_items = ModuleItem::Item {
-                    module_path: ModulePath(
-                        self.module_parts.iter().map(|v| v.to_string()).collect(),
-                    ),
+                    module_path: self.get_module_path(),
                     name: ItemName(variable.to_string()),
                 };
                 let old_value = self.items.insert(ItemName(alias.to_string()), module_items);

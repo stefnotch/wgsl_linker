@@ -120,6 +120,8 @@ impl Ast {
                 AstNode::TemplateEnd => {}
                 AstNode::ImportStart { .. } => visitor.import_start(),
                 AstNode::ImportModulePart(part) => visitor.import_module_part(part.text(source)),
+                AstNode::ImportDotPart => visitor.import_module_part("."),
+                AstNode::ImportDotDotPart => visitor.import_module_part("."),
                 AstNode::ImportVariable { variable, alias } => visitor.import_variable(
                     variable.text(source),
                     alias.as_ref().map(|a| a.text(source)),
@@ -179,6 +181,8 @@ impl Ast {
                     import_start_index = i;
                 }
                 AstNode::ImportModulePart(_) => {}
+                AstNode::ImportDotPart => {}
+                AstNode::ImportDotDotPart => {}
                 AstNode::ImportVariable { .. } => {}
                 AstNode::ImportStar { .. } => {}
                 AstNode::ImportEnd { semicolon } => {
