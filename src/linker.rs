@@ -271,7 +271,7 @@ impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
                         Some(name) => {
                             // properties can still contain values,
                             // because it is ok for a property access to happen after the variable name.
-                            VariableRewriteAction::ReplaceVariable(mangle_name(module_path, &name))
+                            VariableRewriteAction::ReplaceVariable(mangle_name(module_path, name))
                         }
                         None => {
                             self.errors.push(LinkingError::MissingVariable {
@@ -359,7 +359,7 @@ impl Ast {
                 }
             }
             fn import_variable(&mut self, variable: &'a str, alias: Option<&'a str>) {
-                let alias = alias.unwrap_or_else(|| variable);
+                let alias = alias.unwrap_or(variable);
                 let module_items = ModuleItem::Item {
                     module_path: self.get_module_path(),
                     name: ItemName(variable.to_string()),

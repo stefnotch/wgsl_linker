@@ -119,10 +119,7 @@ impl WgslParser {
             .context(StrContext::Label("end of WGSL file"))
             .parse_next(input)?;
 
-        Ok(imports
-            .into_iter()
-            .chain(declarations.into_iter())
-            .collect())
+        Ok(imports.into_iter().chain(declarations).collect())
     }
 
     pub fn imports(input: &mut Input<'_>) -> PResult<Vec<Ast>> {
@@ -142,7 +139,7 @@ impl WgslParser {
                 alt((
                     symbol_pair(['.', '.']).map(|_| AstNode::ImportDotDotPart),
                     symbol('.').map(|_| AstNode::ImportDotPart),
-                    Self::ident.map(|v| AstNode::ImportModulePart(v)),
+                    Self::ident.map(AstNode::ImportModulePart),
                 )),
                 symbol('/'),
             ),
