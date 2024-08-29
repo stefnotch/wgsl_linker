@@ -2,7 +2,7 @@
 //!
 //! # Example
 //! ```rust
-//! use wgsl_linker::linker::{Linker, LinkerCache, ModulePath, ItemName, ModuleItem};
+//! use wgsl_linker::linker::{Linker, LinkerCache, ModulePath, ItemName, ImportedItem, ImportPath};
 //!
 //! let mut linker = Linker::new();
 //!
@@ -20,8 +20,8 @@
 //!
 //! let bar_module = linker.add_imports(
 //!    bar_module,
-//!   [(ItemName::new("uno"), ModuleItem::Item {
-//!      module_path: foo_path,
+//!   [(ItemName::new("uno"), ImportedItem::Item {
+//!      path: ImportPath::Absolute(foo_path),
 //!      name: ItemName::new("uno"),
 //!  })],
 //! );

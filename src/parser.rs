@@ -127,33 +127,48 @@ impl WgslParser {
     }
 
     pub fn import(input: &mut Input<'_>) -> PResult<Ast> {
-        preceded(word("import"), cut_err(Self::import_path))
-            .context(StrContext::Label("import statement"))
+        delimited(
+            word("import"),
+            (opt(Self::relative_import), cut_err(Self::import_path)),
+            must_symbol(';'),
+        )
+        .map(|(a, b)| a.unwrap_or_default().join(b))
+        .context(StrContext::Label("import statement"))
+        .parse_next(input)
+    }
+
+    fn relative_import(input: &mut Input<'_>) -> PResult<Ast> {
+        (
+            alt((
+                (symbol('.'), must_symbol('/')).map(|_| AstNode::ImportDotPart),
+                (symbol_pair(['.', '.']), must_symbol('/')).map(|_| AstNode::ImportDotDotPart),
+            )),
+            repeat(
+                0..,
+                (symbol('.'), must_symbol('.'), must_symbol('/'))
+                    .map(|_| AstNode::ImportDotDotPart),
+            )
+            .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+        )
+            .map(|(a, b)| Ast::single(a).join(b))
             .parse_next(input)
     }
 
     fn import_path(input: &mut Input<'_>) -> PResult<Ast> {
-        let parts = repeat(
-            1..,
-            terminated(
-                alt((
-                    symbol_pair(['.', '.']).map(|_| AstNode::ImportDotDotPart),
-                    symbol('.').map(|_| AstNode::ImportDotPart),
-                    Self::ident.map(AstNode::ImportModulePart),
-                )),
-                symbol('/'),
-            ),
+        (
+            repeat(
+                1..,
+                terminated(Self::ident.map(AstNode::ImportModulePart), symbol('/')),
+            )
+            .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+            alt((
+                Self::import_collection,
+                Self::item_import,
+                Self::star_import,
+            )),
         )
-        .map(|v: Vec<_>| v.into_iter().collect::<Ast>())
-        .verify(|v| matches!(v.0.last(), Some(&AstNode::ImportModulePart(_))))
-        .parse_next(input)?;
-        let end = alt((
-            Self::import_collection,
-            Self::item_import,
-            Self::star_import,
-        ))
-        .parse_next(input)?;
-        Ok(parts.join(end))
+            .map(|(parts, end)| parts.join(end))
+            .parse_next(input)
     }
 
     fn import_collection(input: &mut Input<'_>) -> PResult<Ast> {

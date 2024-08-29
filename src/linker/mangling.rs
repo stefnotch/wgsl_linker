@@ -7,7 +7,7 @@ pub struct UnmangledName {
 
 pub fn write_mangled_name(module_name: &ModulePath, name: &str, output: &mut String) {
     // Length prefixing is a much simpler scheme, but it's not as readable
-    for name_part in module_name.0.iter() {
+    for name_part in module_name.path.iter() {
         write_escaped(name_part, output);
         output.push('_');
     }
@@ -58,7 +58,7 @@ pub fn unmangle_name(mangled_name: &str) -> UnmangledName {
     // Whatever is left over is the name itself.
 
     UnmangledName {
-        module: ModulePath(name_parts),
+        module: ModulePath { path: name_parts },
         name,
     }
 }

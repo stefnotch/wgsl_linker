@@ -1,4 +1,4 @@
-use wgsl_linker::linker::{ItemName, Linker, LinkerCache, ModuleItem, ModulePath};
+use wgsl_linker::linker::{ImportPath, ImportedItem, ItemName, Linker, LinkerCache, ModulePath};
 
 #[test]
 fn basic_linking() {
@@ -22,8 +22,8 @@ fn basic_linking() {
         bar_module,
         [(
             ItemName("uno".to_string()),
-            ModuleItem::Item {
-                module_path: ModulePath::from_slice(&["foo"]),
+            ImportedItem::Item {
+                path: ImportPath::new_relative(0, &["foo"]),
                 name: ItemName("uno".to_string()),
             },
         )],
