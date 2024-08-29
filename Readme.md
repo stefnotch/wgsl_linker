@@ -67,5 +67,6 @@ This project is split into two main parts: the parser and the linker. The parser
 
 ## TODO
 
+- Filesystem support
 - Re-exports
 - Source Maps https://github.com/kaleidawave/source-map
