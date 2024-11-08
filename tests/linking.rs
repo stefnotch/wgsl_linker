@@ -1,4 +1,6 @@
-use wgsl_linker::linker::{ImportPath, ImportedItem, ItemName, Linker, LinkerCache, ModulePath};
+use wgsl_linker::linker::{
+    ImportPath, ImportedItem, ItemName, Linker, LinkerCache, LinkingOptions, ModulePath,
+};
 
 #[test]
 fn basic_linking() {
@@ -7,13 +9,13 @@ fn basic_linking() {
     let _foo_module = linker
         .insert_module(
             ModulePath::from_slice(&["foo"]),
-            "fn uno() -> u32 { return 1; }".to_string(),
+            "fn uno() -> u32 { return 1; }",
         )
         .unwrap();
     let bar_module = linker
         .insert_module(
             ModulePath::from_slice(&["bar"]),
-            "fn dos() -> u32 { return uno() + uno   (); }".to_string(),
+            "fn dos() -> u32 { return uno() + uno   (); }",
         )
         .unwrap();
 
@@ -30,7 +32,11 @@ fn basic_linking() {
     );
 
     let output = linker
-        .compile(bar_module, &mut LinkerCache::default())
+        .compile(
+            bar_module,
+            LinkingOptions::default(),
+            &mut LinkerCache::default(),
+        )
         .unwrap();
     assert_eq!(output.as_str(), "fn foo_uno() -> u32 { return 1; }\nfn bar_dos() -> u32 { return foo_uno() + foo_uno   (); }\n");
 }

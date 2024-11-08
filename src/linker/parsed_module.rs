@@ -1,12 +1,11 @@
 use std::{borrow::Borrow, collections::HashMap};
 
+use arcstr::ArcStr;
 use indexmap::IndexMap;
 
 use crate::parser::Ast;
 
 /// A path to a module, either relative to the current module or absolute.
-/// Relative paths start with "." or "..", absolute paths do not.
-/// "." and ".." may only appear at the beginning of the path.
 #[derive(Debug)]
 pub enum ImportPath {
     Relative {
@@ -28,7 +27,7 @@ impl ImportPath {
         Self::Absolute(ModulePath::from_slice(slice))
     }
 
-    pub fn resolve<'a>(&'a self, base: &ModulePath) -> ModulePath {
+    pub fn resolve(&self, base: &ModulePath) -> ModulePath {
         match self {
             ImportPath::Relative { parent_count, path } => {
                 // -1, because the last element is the name of the module itself
@@ -47,8 +46,7 @@ impl ImportPath {
     }
 }
 
-/// A fully resolved path to a module.
-/// Can refer to a file outside of the root directory.
+/// A fully resolved name of a module.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePath {
     pub path: Vec<String>,
@@ -84,14 +82,14 @@ pub enum ImportedItem {
     AllItems(ImportPath),
 }
 impl ImportedItem {
-    pub fn path<'a>(&'a self) -> &ImportPath {
+    pub fn path(&self) -> &ImportPath {
         match self {
             ImportedItem::Item { path, .. } => path,
             ImportedItem::AllItems(path) => path,
         }
     }
 
-    pub fn resolve<'a>(&'a self, base: &ModulePath) -> ModuleItem {
+    pub fn resolve(&self, base: &ModulePath) -> ModuleItem {
         match self {
             ImportedItem::Item { path, name } => ModuleItem::Item {
                 module_path: path.resolve(base),
@@ -111,7 +109,7 @@ pub enum ModuleItem {
     AllItems(ModulePath),
 }
 impl ModuleItem {
-    pub fn module_path<'a>(&'a self) -> &ModulePath {
+    pub fn module_path(&self) -> &ModulePath {
         match self {
             ModuleItem::Item { module_path, .. } => module_path,
             ModuleItem::AllItems(module_path) => module_path,
@@ -125,7 +123,7 @@ pub enum GlobalItem {
 }
 
 pub struct ParsedModule {
-    pub source: String,
+    pub source: ArcStr,
     pub ast: Ast,
     pub global_items: HashMap<ItemName, GlobalItem>,
     pub imports: IndexMap<ItemName, ImportedItem>,

@@ -29,7 +29,6 @@ pub fn parse(input: &str) -> Result<Ast, WgslParseError> {
     Ok(ast)
 }
 
-// winnow::error::TreeError<&'a [SpannedToken<'a>]>
 pub type Input<'a> = &'a [SpannedToken<'a>];
 
 /// A basic parser for the purposes of linking multiple WGSL modules together.

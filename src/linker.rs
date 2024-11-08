@@ -4,6 +4,8 @@ mod parsed_module;
 
 use std::collections::{HashMap, HashSet};
 
+use arcstr::ArcStr;
+use filesystem::ReadonlyFilesystem;
 use indexmap::IndexMap;
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use thiserror::Error;
@@ -12,18 +14,24 @@ use crate::parser::{
     parse, Ast, AstNode, PropertiesIter, RewriteAction, VariableRewriteAction, WgslParseError,
 };
 use crate::parser::{Rewriter, Visitor};
-pub use mangling::{mangle_name, unmangle_name, write_mangled_name};
+pub use mangling::{mangle_name, unmangle_name, write_mangled_name, UnmangledName};
 use parsed_module::{GlobalItem, ParsedModule};
 pub use parsed_module::{ImportPath, ImportedItem, ItemName, ModuleItem, ModulePath};
 
 /// Links multiple modules together into a single module.
 /// Main entry point of the library.
-pub struct Linker<FS> {
+#[derive(Default)]
+pub struct Linker {
     /// Whenever a module is updated, we generate a new key for it.
     modules: SlotMap<ModuleKey, ParsedModule>,
     module_names: SecondaryMap<ModuleKey, ModulePath>,
     module_paths: HashMap<ModulePath, ModuleKey>,
-    fs: FS,
+}
+
+#[derive(Default)]
+pub struct LinkingOptions {
+    #[cfg(feature = "source_map")]
+    pub generate_source_map: bool,
 }
 
 /// A cache for compiled modules. This is useful when linking multiple times, as it avoids reparsing.
@@ -39,9 +47,9 @@ impl LinkerCache {
         Default::default()
     }
 
-    pub fn invalidate_cache(&mut self, module_exists: impl Fn(&ModuleKey) -> bool) {
-        self.imports.retain(|k, _| module_exists(k));
-        self.compiled_modules.retain(|k, _| module_exists(k));
+    pub fn invalidate_cache(&mut self, module_exists: impl Fn(ModuleKey) -> bool) {
+        self.imports.retain(|k, _| module_exists(*k));
+        self.compiled_modules.retain(|k, _| module_exists(*k));
     }
 }
 
@@ -69,6 +77,25 @@ pub enum LinkingError {
 }
 
 #[derive(Error, Debug)]
+pub enum CollectModulesError<FSError> {
+    #[error(transparent)]
+    ModuleNotFound(FSError),
+    #[error(transparent)]
+    ParseError(#[from] WgslParseError),
+    #[error(transparent)]
+    LinkingError(#[from] LinkingError),
+}
+
+impl<T> From<AddModuleError> for CollectModulesError<T> {
+    fn from(e: AddModuleError) -> Self {
+        match e {
+            AddModuleError::ParseError(e) => e.into(),
+            AddModuleError::LinkingError(e) => e.into(),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
 pub enum AddModuleError {
     #[error(transparent)]
     ParseError(#[from] WgslParseError),
@@ -76,28 +103,18 @@ pub enum AddModuleError {
     LinkingError(#[from] LinkingError),
 }
 
-impl Linker<filesystem::EmptyFilesystem> {
-    pub fn new() -> Self {
-        Self::new_with_fs(filesystem::EmptyFilesystem::default())
-    }
-}
-
-impl<FS> Linker<FS> {
-    pub fn new_with_fs(fs: FS) -> Linker<FS> {
-        Self {
-            modules: Default::default(),
-            module_names: Default::default(),
-            module_paths: Default::default(),
-            fs,
-        }
+impl Linker {
+    pub fn new() -> Linker {
+        Self::default()
     }
 
     /// Adds or updates a module in the linker.
-    pub fn insert_module(
+    pub fn insert_module<Source: Into<ArcStr>>(
         &mut self,
         name: ModulePath,
-        source: String,
+        source: Source,
     ) -> Result<ModuleKey, AddModuleError> {
+        let source: ArcStr = source.into();
         let ast = parse(&source)?;
         let global_items = ast.get_global_items(&source);
         let imports = ast.get_imports(&source)?;
@@ -114,6 +131,15 @@ impl<FS> Linker<FS> {
         }
 
         Ok(module_key)
+    }
+
+    fn get_exact_module(&self, module: &ModulePath, source: &str) -> Option<ModuleKey> {
+        let module_key = self.module_paths.get(module)?;
+        if self.modules[*module_key].source == source {
+            Some(*module_key)
+        } else {
+            None
+        }
     }
 
     /// Removes a module from the linker. On success, returns the module path.
@@ -141,23 +167,6 @@ impl<FS> Linker<FS> {
         new_key
     }
 
-    fn compile_single_module(
-        &self,
-        module: ModuleKey,
-        imports: &HashMap<ItemName, ModuleItem>,
-    ) -> Result<CompiledModule, LinkingError> {
-        let parsed_module = &self.modules[module];
-        let mut visitor = LinkerVisitor::new(self, module, imports);
-        let mangled_source = parsed_module
-            .ast
-            .rewrite(&parsed_module.source, &mut visitor);
-        if visitor.errors.is_empty() {
-            Ok(CompiledModule { mangled_source })
-        } else {
-            Err(LinkingError::Aggregate(visitor.errors))
-        }
-    }
-
     /// Compile multiple modules into one output file.
     /// Module compilation is mostly independent.
     /// The overall process is:
@@ -167,9 +176,11 @@ impl<FS> Linker<FS> {
     pub fn compile(
         &self,
         entry_point: ModuleKey,
+        options: LinkingOptions,
         cache: &mut LinkerCache,
     ) -> Result<String, LinkingError> {
-        let sorted_modules = self.collect_imports(entry_point)?;
+        cache.invalidate_cache(|v| self.modules.contains_key(v));
+        let sorted_modules = self.collect_modules(entry_point)?;
 
         // Independently compile each module, order does NOT matter.
         // We do not have re-exports yet, which simplifies the process.
@@ -179,7 +190,7 @@ impl<FS> Linker<FS> {
                 .entry(*module)
                 .or_insert_with(|| self.resolve_imports(*module));
             if !cache.compiled_modules.contains_key(module) {
-                let compiled_module = self.compile_single_module(*module, &imports)?;
+                let compiled_module = self.compile_single_module(*module, imports)?;
                 cache.compiled_modules.insert(*module, compiled_module);
             }
         }
@@ -192,6 +203,69 @@ impl<FS> Linker<FS> {
         Ok(result)
     }
 
+    /// Parses and inserts all missing modules from the filesystem.
+    pub fn collect_fs<
+        'a,
+        FS: ReadonlyFilesystem,
+        EntryPoints: IntoIterator<Item = &'a ModulePath>,
+    >(
+        &mut self,
+        fs: &FS,
+        entry_points: EntryPoints,
+    ) -> Result<(), CollectModulesError<FS::Error>> {
+        // No collecting a result here, because that would make the parallelism harder.
+        let mut stack = vec![];
+        let mut seen = HashSet::new();
+
+        for module_path in entry_points {
+            // Can happen in parallel (no issues there)
+            // (Can return the same ArcStr, because it is a reference)
+            let source = fs
+                .read(module_path)
+                .map_err(CollectModulesError::ModuleNotFound)?;
+
+            // Should happen on a single thread. Order independent
+            let module = match self.get_exact_module(module_path, &source) {
+                Some(v) => v,
+                None => self.insert_module(module_path.clone(), source)?,
+            };
+
+            // Should happen on a single thread
+            // Order independent, *because* we are not returning a result!
+            if seen.insert(module) {
+                stack.push(module);
+            }
+        }
+
+        while let Some(module_key) = stack.pop() {
+            // Order of imports doesn't matter (no result to collect)
+            // So we can iterate in any order.
+            let module_base = &self.module_names[module_key];
+            let module_imports = self.modules[module_key]
+                .imports
+                .values()
+                .map(|v| v.path().resolve(module_base))
+                .collect::<Vec<_>>();
+
+            for module_path in module_imports {
+                let source = fs
+                    .read(&module_path)
+                    .map_err(CollectModulesError::ModuleNotFound)?;
+
+                let module = match self.get_exact_module(&module_path, &source) {
+                    Some(v) => v,
+                    None => self.insert_module(module_path, source)?,
+                };
+
+                if seen.insert(module) {
+                    stack.push(module);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn resolve_imports(&self, module: ModuleKey) -> HashMap<ItemName, ModuleItem> {
         self.modules[module]
             .imports
@@ -202,7 +276,7 @@ impl<FS> Linker<FS> {
 
     /// Pre-order traversal of the import graph.
     /// Entry point is the first module.
-    fn collect_imports(&self, entry_point: ModuleKey) -> Result<Vec<ModuleKey>, LinkingError> {
+    fn collect_modules(&self, entry_point: ModuleKey) -> Result<Vec<ModuleKey>, LinkingError> {
         let mut result = vec![];
         let mut stack = vec![entry_point];
         let mut seen = HashSet::new();
@@ -231,10 +305,27 @@ impl<FS> Linker<FS> {
 
         Ok(result)
     }
+
+    fn compile_single_module(
+        &self,
+        module: ModuleKey,
+        imports: &HashMap<ItemName, ModuleItem>,
+    ) -> Result<CompiledModule, LinkingError> {
+        let parsed_module = &self.modules[module];
+        let mut visitor = LinkerVisitor::new(self, module, imports);
+        let mangled_source = parsed_module
+            .ast
+            .rewrite(&parsed_module.source, &mut visitor);
+        if visitor.errors.is_empty() {
+            Ok(CompiledModule { mangled_source })
+        } else {
+            Err(LinkingError::Aggregate(visitor.errors))
+        }
+    }
 }
 
-struct LinkerVisitor<'a, FS> {
-    linker: &'a Linker<FS>,
+struct LinkerVisitor<'a> {
+    linker: &'a Linker,
     module_key: ModuleKey,
     imports: &'a HashMap<ItemName, ModuleItem>,
     global_items: &'a HashMap<ItemName, GlobalItem>,
@@ -243,9 +334,9 @@ struct LinkerVisitor<'a, FS> {
     errors: Vec<LinkingError>,
 }
 
-impl<'a, FS> LinkerVisitor<'a, FS> {
+impl<'a> LinkerVisitor<'a> {
     fn new(
-        linker: &'a Linker<FS>,
+        linker: &'a Linker,
         module_key: ModuleKey,
         imports: &'a HashMap<ItemName, ModuleItem>,
     ) -> Self {
@@ -268,7 +359,7 @@ impl<'a, FS> LinkerVisitor<'a, FS> {
     }
 }
 
-impl<'a, FS> Rewriter<'a> for LinkerVisitor<'a, FS> {
+impl<'a> Rewriter<'a> for LinkerVisitor<'a> {
     fn open_block(&mut self) {
         self.scoped_items.push(HashSet::new());
     }
@@ -472,13 +563,13 @@ mod tests {
         let foo_module = linker
             .insert_module(
                 ModulePath::from_slice(&["foo"]),
-                "fn uno() -> u32 { return 1; }".to_string(),
+                arcstr::literal!("fn uno() -> u32 { return 1; }"),
             )
             .unwrap();
         let bar_module = linker
             .insert_module(
                 ModulePath::from_slice(&["bar"]),
-                "fn dos() -> u32 { return uno() + uno   (); }".to_string(),
+                arcstr::literal!("fn dos() -> u32 { return uno() + uno   (); }"),
             )
             .unwrap();
 

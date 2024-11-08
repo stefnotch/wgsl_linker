@@ -99,13 +99,11 @@ impl Tokenizer {
 
     /// Checks if it's part of a Unicode line break, according to https://www.w3.org/TR/WGSL/#line-break
     fn is_newline_start(c: char) -> bool {
-        c == '\u{000A}'
-            || c == '\u{000B}'
-            || c == '\u{000C}'
-            || c == '\u{000D}'
-            || c == '\u{0085}'
-            || c == '\u{2028}'
-            || c == '\u{2029}'
+        match c {
+            '\u{000A}' | '\u{000B}' | '\u{000C}' | '\u{000D}' | '\u{0085}' | '\u{2028}'
+            | '\u{2029}' => true,
+            _ => false,
+        }
     }
 
     fn new_line(input: &mut TokenizerInput<'_>) -> PResult<()> {
@@ -130,35 +128,13 @@ impl Tokenizer {
     }
 
     fn is_keyword(text: &str) -> bool {
-        matches!(
-            text,
-            "alias"
-                | "break"
-                | "case"
-                | "const"
-                | "const_assert"
-                | "continue"
-                | "continuing"
-                | "default"
-                | "diagnostic"
-                | "discard"
-                | "else"
-                | "enable"
-                | "false"
-                | "fn"
-                | "for"
-                | "if"
-                | "let"
-                | "loop"
-                | "override"
-                | "requires"
-                | "return"
-                | "struct"
-                | "switch"
-                | "true"
-                | "var"
-                | "while"
-        )
+        match text {
+            "alias" | "break" | "case" | "const" | "const_assert" | "continue" | "continuing"
+            | "default" | "diagnostic" | "discard" | "else" | "enable" | "false" | "fn" | "for"
+            | "if" | "let" | "loop" | "override" | "requires" | "return" | "struct" | "switch"
+            | "true" | "var" | "while" => true,
+            _ => false,
+        }
     }
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {

@@ -6,7 +6,6 @@ pub struct UnmangledName {
 }
 
 pub fn write_mangled_name(module_name: &ModulePath, name: &str, output: &mut String) {
-    // Length prefixing is a much simpler scheme, but it's not as readable
     for name_part in module_name.path.iter() {
         write_escaped(name_part, output);
         output.push('_');
