@@ -28,8 +28,12 @@
 //!
 //! let output = linker.compile(bar_module, &mut LinkerCache::default()).unwrap();
 //! ```
-
+/*
 pub mod linker;
 pub mod parser;
 
 pub use linker::Linker;
+ */
+/// SAFETY: The runtime environment must be single-threaded WASM.
+#[global_allocator]
+static ALLOCATOR: talc::TalckWasm = unsafe { talc::TalckWasm::new_global() };
