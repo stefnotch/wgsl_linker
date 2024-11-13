@@ -69,3 +69,19 @@ This project is split into two main parts: the parser and the linker. The parser
 
 - Re-exports
 - Source Maps https://github.com/kaleidawave/source-map
+
+## WASM Commands
+
+```
+./../binaryen-version_119/bin/wasm-opt.exe --dce -Os -o ./dist/wgsl_linker_opt.wasm ./dist/wgsl_linker_bg.wasm
+
+twiggy top -n 20 ./dist/wgsl_linker_bg.wasm
+
+wasm-snip ./dist/wgsl_linker_bg.wasm -o ./dist/wgsl_linker_snip.wasm --snip-rust-fmt-code --snip-rust-panicking-code
+
+./../binaryen-version_119/bin/wasm-opt.exe --dce -Os -o ./dist/wgsl_linker_opt.wasm ./dist/wgsl_linker_snip.wasm
+
+
+
+npm run release; ls dist/wgsl_linker_bg.wasm | get size | format filesize B
+```

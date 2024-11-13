@@ -1,24 +1,8 @@
-use thiserror::Error;
-use winnow::error::StrContext;
-
 use super::Span;
-
-#[derive(Error, Debug)]
-pub struct WgslParseError {
-    pub message: String,
-    pub position: usize,
-    pub context: Vec<StrContext>,
-}
-
-impl std::fmt::Display for WgslParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
 
 pub type VariableSpan = Span;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AstNode {
     Declare(VariableSpan),
     Use(VariableSpan),
@@ -50,7 +34,7 @@ pub enum AstNode {
     },
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct Ast(pub Vec<AstNode>);
 impl Ast {
     pub fn new() -> Self {

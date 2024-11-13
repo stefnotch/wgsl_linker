@@ -3,13 +3,12 @@ use winnow::{
     combinator::{alt, cut_err, dispatch, empty, eof, fail, opt, peek, repeat, terminated, trace},
     error::StrContext,
     token::{any, one_of, take_till, take_while},
-    Located, PResult, Parser,
+    Located, Parser,
 };
 
-use super::{
-    parser_output::WgslParseError,
-    token::{SpannedToken, Token},
-};
+use super::token::{SpannedToken, Token};
+
+type PResult<O> = Result<O, winnow::error::ErrMode<()>>;
 
 pub type TokenizerInput<'a> = Located<&'a str>;
 
@@ -17,14 +16,10 @@ pub struct Tokenizer;
 
 /// Similar in purpose to [Naga's Lexer](https://github.com/gfx-rs/wgpu/blob/trunk/naga/src/front/wgsl/parse/lexer.rs)
 impl Tokenizer {
-    pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, WgslParseError> {
+    pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, ()> {
         let input = Located::new(input);
         let result = trace("tokenization", Self::tokens).parse(input);
-        result.map_err(|e| WgslParseError {
-            message: e.to_string(),
-            position: e.offset(),
-            context: e.into_inner().context().cloned().collect(),
-        })
+        result.map_err(|_e| ())
     }
 
     pub fn tokens<'a>(input: &mut TokenizerInput<'a>) -> PResult<Vec<SpannedToken<'a>>> {

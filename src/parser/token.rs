@@ -1,20 +1,14 @@
-use std::{fmt, ops::Range};
+use std::ops::Range;
 
 use super::Span;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Token<'a> {
     Symbol(char),
     Paren(char),
     Number,
     Word(&'a str),
     Keyword(&'a str),
-}
-
-impl fmt::Debug for SpannedToken<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.token)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -28,6 +22,13 @@ impl<'a> From<(Token<'a>, Range<usize>)> for SpannedToken<'a> {
             token,
             span: span.into(),
         }
+    }
+}
+
+impl<'a> core::fmt::Debug for SpannedToken<'a> {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // noop
+        Ok(())
     }
 }
 

@@ -11,19 +11,18 @@ use winnow::{
         alt, cut_err, delimited, dispatch, empty, eof, fail, not, opt, peek, preceded, repeat,
         separated, seq, terminated,
     },
-    error::{
-        ContextError, ErrMode, ErrorKind, ParseError, ParserError, StrContext, StrContextValue,
-    },
+    error::{ErrMode, ErrorKind, ParserError, StrContext, StrContextValue},
     stream::Stream,
     token::{any, one_of, take_till},
-    PResult, Parser,
+    Parser,
 };
 
-pub use parser_output::{Ast, AstNode, VariableSpan, WgslParseError};
-pub use rewriter::{PropertiesIter, RewriteAction, Rewriter, VariableRewriteAction, Visitor};
+pub use parser_output::{Ast, AstNode, VariableSpan};
 pub use token::{SpannedToken, Token};
 
-pub fn parse(input: &str) -> Result<Ast, WgslParseError> {
+type PResult<O> = Result<O, winnow::error::ErrMode<()>>;
+
+pub fn parse(input: &str) -> Result<Ast, ()> {
     let tokens = Tokenizer::tokenize(input)?;
     let ast = WgslParser::parse(&tokens)?;
     Ok(ast)
@@ -47,76 +46,23 @@ enum Op {
     Other,
 }
 
-struct DisplayParseError<'error, T> {
-    error: &'error T,
-}
-
-impl<'a, 'error> core::fmt::Display
-    for DisplayParseError<'error, ParseError<&'a [SpannedToken<'a>], ContextError>>
+fn jvec<T>(v: Vec<T>) -> Ast
+where
+    Ast: FromIterator<T>,
 {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let tokens = self.error.input();
-        let offset = self.error.offset();
-        let tokens_at_error = &tokens[offset..];
-        let error_message = self.error.inner().to_string();
-
-        match tokens_at_error.first() {
-            Some(token) => {
-                writeln!(f, "parse error at offset {}.", token.span.start)?;
-                let tokens_before_error = &tokens[offset.saturating_sub(2)..offset];
-                let tokens_after_error = &tokens[offset..(offset + 5).min(tokens.len())];
-                let mut tokens_before_text = String::new();
-                for token in tokens_before_error {
-                    tokens_before_text.push_str(format!("{:?} ", token.token).as_str());
-                }
-                write!(f, "{}", tokens_before_text)?;
-                for token in tokens_after_error {
-                    write!(f, "{:?} ", token.token)?;
-                }
-                writeln!(f)?;
-                for _ in 0..tokens_before_text.len() {
-                    write!(f, " ")?;
-                }
-                writeln!(f, "^{}", error_message)?;
-            }
-            None => writeln!(f, "{}.", error_message)?,
-        };
-        Ok(())
-    }
-}
-
-impl<'a> From<ParseError<&'a [SpannedToken<'a>], ContextError>> for WgslParseError {
-    fn from(error: ParseError<&'a [SpannedToken<'a>], ContextError>) -> Self {
-        let position = error.offset();
-        let message = (DisplayParseError { error: &error }).to_string();
-        let context = error.into_inner().context().cloned().collect();
-
-        WgslParseError {
-            message,
-            position,
-            context,
-        }
-    }
+    v.into_iter().collect::<Ast>()
 }
 
 impl WgslParser {
-    pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, WgslParseError> {
-        Self::translation_unit.parse(input).map_err(|e| e.into())
+    pub fn parse<'a>(input: &'a [SpannedToken<'a>]) -> Result<Ast, ()> {
+        Self::translation_unit.parse(input).map_err(|_e| ())
     }
 
     pub fn translation_unit(input: &mut Input<'_>) -> PResult<Ast> {
-        let imports = Self::imports
-            .context(StrContext::Label("imports"))
-            .parse_next(input)?;
-        Self::global_directives
-            .context(StrContext::Label("directives"))
-            .parse_next(input)?;
-        let declarations = Self::global_decls
-            .context(StrContext::Label("global declarations"))
-            .parse_next(input)?;
-        let _ = cut_err(eof)
-            .context(StrContext::Label("end of WGSL file"))
-            .parse_next(input)?;
+        let imports = Self::imports.parse_next(input)?;
+        Self::global_directives.parse_next(input)?;
+        let declarations = Self::global_decls.parse_next(input)?;
+        let _ = cut_err(eof).parse_next(input)?;
 
         Ok(imports.into_iter().chain(declarations).collect())
     }
@@ -132,7 +78,6 @@ impl WgslParser {
             must_symbol(';'),
         )
         .map(|(a, b)| a.unwrap_or_default().join(b))
-        .context(StrContext::Label("import statement"))
         .parse_next(input)
     }
 
@@ -147,7 +92,7 @@ impl WgslParser {
                 (symbol('.'), must_symbol('.'), must_symbol('/'))
                     .map(|_| AstNode::ImportDotDotPart),
             )
-            .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+            .map(jvec),
         )
             .map(|(a, b)| Ast::single(a).join(b))
             .parse_next(input)
@@ -159,7 +104,7 @@ impl WgslParser {
                 1..,
                 terminated(Self::ident.map(AstNode::ImportModulePart), symbol('/')),
             )
-            .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+            .map(jvec),
             alt((
                 Self::import_collection,
                 Self::item_import,
@@ -177,7 +122,7 @@ impl WgslParser {
                 1..,
                 alt((Self::import_path, Self::item_import)),
             ))
-            .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+            .map(jvec),
             '}',
         )
         .context(StrContext::Label("import collection"))
@@ -227,11 +172,7 @@ impl WgslParser {
     }
 
     pub fn global_decls(input: &mut Input<'_>) -> PResult<Vec<Ast>> {
-        repeat(
-            0..,
-            Self::global_decl.context(StrContext::Label("top level declaration")),
-        )
-        .parse_next(input)
+        repeat(0.., Self::global_decl).parse_next(input)
     }
 
     pub fn global_decl(input: &mut Input<'_>) -> PResult<Ast> {
@@ -287,7 +228,7 @@ impl WgslParser {
                     )
                         .map(|(a, _, b)| a.join(b)),
                 )
-                .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+                .map(jvec),
                 '}',
             ))
             .context(StrContext::Label("struct body")),
@@ -315,7 +256,7 @@ impl WgslParser {
 
         let params = cut_err(parens(
             '(',
-            comma_separated(0.., Self::fn_param).map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+            comma_separated(0.., Self::fn_param).map(jvec),
             ')',
         ))
         .context(StrContext::Label("function parameters"))
@@ -389,14 +330,13 @@ impl WgslParser {
     }
 
     pub fn statements(input: &mut Input<'_>) -> PResult<Ast> {
-        repeat(0.., Self::statement.context(StrContext::Label("statement")))
+        repeat(0.., Self::statement)
             .map(|v: Vec<_>| v.into_iter().collect())
             .parse_next(input)
     }
 
     pub fn compound_statement(input: &mut Input<'_>) -> PResult<Ast> {
         (Self::attributes, parens('{', Self::statements, '}'))
-            .context(StrContext::Label("compound statement"))
             .map(|(a, b)| {
                 Ast::single(AstNode::OpenBlock)
                     .join(a)
@@ -421,8 +361,7 @@ impl WgslParser {
                     // Ambiguity between this and variable_updating_statement needs to be resolved
                     // before cut_err happens
                     peek(paren('(')),
-                    cut_err(Self::argument_expression_list)
-                        .context(StrContext::Label("function call")),
+                    cut_err(Self::argument_expression_list),
                 )
                     .map(|(a, b, _, c)| a.join(b).join(c)),
                 Self::variable_or_value_statement,
@@ -455,9 +394,8 @@ impl WgslParser {
                         ),
                         ')',
                     ))
-                    .context(StrContext::Label("for loop definition"))
                     .map(|(a, b, c)| a.unwrap_or_default().join(b).join(c)),
-                    cut_err(Self::compound_statement).context(StrContext::Label("for loop body")),
+                    cut_err(Self::compound_statement),
                 ),
             )
             .map(|(a, b)| {
@@ -468,26 +406,18 @@ impl WgslParser {
             }),
             (
                 keyword("if"),
-                cut_err(Self::expression).context(StrContext::Label("if condition")),
-                cut_err(Self::compound_statement).context(StrContext::Label("if body")),
+                cut_err(Self::expression),
+                cut_err(Self::compound_statement),
                 repeat(
                     0..,
                     preceded(
                         (keyword("else"), keyword("if")),
-                        (
-                            cut_err(Self::expression)
-                                .context(StrContext::Label("else if condition")),
-                            cut_err(Self::compound_statement)
-                                .context(StrContext::Label("else if body")),
-                        ),
+                        (cut_err(Self::expression), cut_err(Self::compound_statement)),
                     )
                     .map(|(a, b)| a.join(b)),
                 )
-                .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
-                opt(preceded(
-                    keyword("else"),
-                    cut_err(Self::compound_statement).context(StrContext::Label("else body")),
-                )),
+                .map(jvec),
+                opt(preceded(keyword("else"), cut_err(Self::compound_statement))),
             )
                 .map(|(_, a, b, c, d)| a.join(b).join(c).join(d)),
             (
@@ -497,27 +427,20 @@ impl WgslParser {
                     '{',
                     (Self::statements, opt(Self::loop_continuing_block)),
                     '}',
-                ))
-                .context(StrContext::Label("loop body")),
+                )),
             )
                 .map(|(_, a, (b, c))| a.join(b).join(c)),
             (
                 keyword("switch"),
-                cut_err(Self::expression).context(StrContext::Label("switch expression")),
+                cut_err(Self::expression),
                 Self::attributes,
-                cut_err(parens(
-                    '{',
-                    repeat(0.., Self::switch_clause)
-                        .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
-                    '}',
-                ))
-                .context(StrContext::Label("switch body")),
+                cut_err(parens('{', repeat(0.., Self::switch_clause).map(jvec), '}')),
             )
                 .map(|(_, a, b, c)| a.join(b).join(c)),
             (
                 keyword("while"),
-                cut_err(Self::expression).context(StrContext::Label("while condition")),
-                cut_err(Self::compound_statement).context(StrContext::Label("while body")),
+                cut_err(Self::expression),
+                cut_err(Self::compound_statement),
             )
                 .map(|(_, a, b)| a.join(b)),
             Self::compound_statement,
@@ -680,7 +603,7 @@ impl WgslParser {
                     alt((keyword("default").default_value::<Ast>(), Self::expression)),
                 ))
                 .context(StrContext::Label("switch case expression"))
-                .map(|v: Vec<_>| v.into_iter().collect::<Ast>()),
+                .map(jvec),
             ),
             keyword("default").default_value::<Ast>(),
         ))
@@ -934,11 +857,7 @@ impl WgslParser {
         } else {
             alt((
                 Self::literal.default_value::<Ast>(),
-                parens(
-                    '(',
-                    cut_err(Self::expression).context(StrContext::Label("nested expression")),
-                    ')',
-                ),
+                parens('(', cut_err(Self::expression), ')'),
             ))
             .parse_next(input)
         }
@@ -957,17 +876,12 @@ impl WgslParser {
                     .chain(std::iter::once(Ast::single(AstNode::TemplateEnd))),
             )
         })
-        .context(StrContext::Label("template arguments"))
         .parse_next(input)
     }
 
     fn maybe_template_args(input: &mut Input<'_>) -> PResult<(Ast, IsTemplateResult)> {
         let _ = symbol('<').parse_next(input)?;
-        let (mut ast, is_template) = Self::maybe_template_expression
-            .context(StrContext::Label(
-                "expression in template or after less than",
-            ))
-            .parse_next(input)?;
+        let (mut ast, is_template) = Self::maybe_template_expression.parse_next(input)?;
         if is_template == IsTemplateResult::No {
             return Ok((ast, IsTemplateResult::No));
         }
@@ -1010,19 +924,13 @@ impl WgslParser {
     pub fn component_or_swizzle_specifier(input: &mut Input<'_>) -> PResult<Ast> {
         (
             alt((
-                (symbol('.'), cut_err(Self::ident))
-                    .context(StrContext::Label("property access or swizzle"))
-                    .map(|(dot, property)| {
-                        Ast::single(AstNode::PropertyUse {
-                            dot: dot.span.start,
-                            property,
-                        })
-                    }),
-                parens(
-                    '[',
-                    cut_err(Self::expression).context(StrContext::Label("nested expression")),
-                    ']',
-                ),
+                (symbol('.'), cut_err(Self::ident)).map(|(dot, property)| {
+                    Ast::single(AstNode::PropertyUse {
+                        dot: dot.span.start,
+                        property,
+                    })
+                }),
+                parens('[', cut_err(Self::expression), ']'),
             )),
             opt(Self::component_or_swizzle_specifier),
         )
@@ -1065,61 +973,46 @@ impl WgslParser {
     }
 }
 
-fn word(
-    a: &str,
-) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ContextError> {
+fn word(a: &str) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ()> {
     token_kind(Token::Word(a))
 }
 
-fn keyword(
-    a: &str,
-) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ContextError> {
+fn keyword(a: &str) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ()> {
     token_kind(Token::Keyword(a))
 }
 
-fn symbol<'a>(
-    a: char,
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
+fn symbol<'a>(a: char) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
     token_kind(Token::Symbol(a))
 }
 
 fn must_symbol<'a>(
     a: char,
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
-    cut_err(symbol(a)).context(StrContext::Expected(StrContextValue::CharLiteral(a)))
+) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
+    cut_err(symbol(a))
 }
 
 fn symbol_pair<'a>(
     a: [char; 2],
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Slice, ContextError> {
-    (symbol(a[0]), symbol(a[1]))
-        .take()
-        .context(StrContext::Label("symbols"))
+) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Slice, ()> {
+    (symbol(a[0]), symbol(a[1])).take()
 }
 
-fn paren<'a>(
-    a: char,
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
+fn paren<'a>(a: char) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
     token_kind(Token::Paren(a))
 }
 
 fn parens<'a, Output>(
     a: char,
-    parser: impl Parser<Input<'a>, Output, ContextError>,
+    parser: impl Parser<Input<'a>, Output, ()>,
     b: char,
-) -> impl Parser<Input<'a>, Output, ContextError> {
-    delimited(
-        paren(a),
-        parser,
-        cut_err(paren(b)).context(StrContext::Expected(StrContextValue::CharLiteral(b))),
-    )
-    .context(StrContext::Label("parentheses"))
+) -> impl Parser<Input<'a>, Output, ()> {
+    delimited(paren(a), parser, cut_err(paren(b)))
 }
 
 fn comma_separated<'a, Accumulator, Output>(
     occurrences: impl Into<winnow::stream::Range>,
-    parser: impl Parser<Input<'a>, Output, ContextError>,
-) -> impl Parser<Input<'a>, Accumulator, ContextError>
+    parser: impl Parser<Input<'a>, Output, ()>,
+) -> impl Parser<Input<'a>, Accumulator, ()>
 where
     Accumulator: winnow::stream::Accumulate<Output>,
 {
@@ -1127,17 +1020,15 @@ where
         separated(occurrences, parser, symbol(',')),
         opt(symbol(',')),
     )
-    .context(StrContext::Label("comma separated"))
 }
 
-fn number<'a>() -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError>
-{
+fn number<'a>() -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
     token_kind(Token::Number)
 }
 
 fn token_kind<'a>(
     token_kind: Token<'a>,
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ContextError> {
+) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
     move |input: &mut Input<'a>| {
         let checkpoint = input.checkpoint();
         match input.next_token() {

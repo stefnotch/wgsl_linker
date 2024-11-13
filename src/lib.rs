@@ -1,3 +1,5 @@
+// #![no_std]
+
 //! A WGSL linker, which parses and links multiple WGSL files into a single module.
 //!
 //! # Example
@@ -28,6 +30,12 @@
 //!
 //! let output = linker.compile(bar_module, &mut LinkerCache::default()).unwrap();
 //! ```
+
+mod parser;
+
+use no_panic::no_panic;
+use wasm_bindgen::prelude::wasm_bindgen;
+
 /*
 pub mod linker;
 pub mod parser;
@@ -36,4 +44,20 @@ pub use linker::Linker;
  */
 /// SAFETY: The runtime environment must be single-threaded WASM.
 #[global_allocator]
-static ALLOCATOR: talc::TalckWasm = unsafe { talc::TalckWasm::new_global() };
+static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
+    static mut MEMORY: [u8; 0x1000000] = [0; 0x1000000];
+    let span = talc::Span::from_const_array(std::ptr::addr_of!(MEMORY));
+    talc::Talc::new(unsafe { talc::ClaimOnOom::new(span) }).lock()
+};
+
+#[no_panic]
+#[wasm_bindgen]
+pub fn main(input: &str) -> String {
+    let a = parser::parse(input).unwrap();
+
+    if a.0.len() > 3 {
+        return "Hi".to_string();
+    } else {
+        return "Bye".to_string();
+    }
+}
