@@ -328,6 +328,15 @@ fn ptr_uses_predeclared_enumerants() {
 }
 
 #[test]
+fn fast_parsing() {
+    let source = std::fs::read_to_string("./tests/unity_webgpu_000002B8376A5020.fs.wgsl").unwrap();
+    let time_before = std::time::Instant::now();
+    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    println!("Took {}", time_before.elapsed().as_millis());
+    assert!(!parse_result.0.is_empty());
+}
+
+#[test]
 fn break_if() {
     use PrintableNode::*;
     let source = "fn a(){
