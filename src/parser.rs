@@ -11,7 +11,7 @@ use winnow::{
         alt, cut_err, delimited, dispatch, empty, eof, fail, not, opt, peek, preceded, repeat,
         separated, seq, terminated,
     },
-    error::{ErrMode, ErrorKind, ParserError, StrContext, StrContextValue},
+    error::{ErrMode, ErrorKind, ParserError, StrContext},
     stream::Stream,
     token::{any, one_of, take_till},
     Parser,
@@ -336,14 +336,12 @@ impl WgslParser {
     }
 
     pub fn compound_statement(input: &mut Input<'_>) -> PResult<Ast> {
-        (Self::attributes, parens('{', Self::statements, '}'))
-            .map(|(a, b)| {
-                Ast::single(AstNode::OpenBlock)
-                    .join(a)
-                    .join(b)
-                    .join(Ast::single(AstNode::CloseBlock))
-            })
-            .parse_next(input)
+        let a = Self::attributes.parse_next(input)?;
+        let b = parens('{', Self::statements, '}').parse_next(input)?;
+        Ok(Ast::single(AstNode::OpenBlock)
+            .join(a)
+            .join(b)
+            .join(Ast::single(AstNode::CloseBlock)))
     }
 
     pub fn statement(input: &mut Input<'_>) -> PResult<Ast> {
@@ -824,11 +822,10 @@ impl WgslParser {
                     Token::Symbol('-'),
                     Token::Symbol('~'),
                 ]),
-                cut_err(Self::unary_expression)
-                    .context(StrContext::Label("expression after unary operator")),
+                cut_err(Self::unary_expression),
             ),
             (
-                Self::primary_expression.context(StrContext::Label("primary expression")),
+                Self::primary_expression,
                 opt(Self::component_or_swizzle_specifier),
             )
                 .map(|(a, b)| a.join(b)),
@@ -939,17 +936,15 @@ impl WgslParser {
     }
 
     pub fn use_qualified_ident(input: &mut Input<'_>) -> PResult<Ast> {
-        (
-            Self::use_ident,
-            opt((symbol('.'), Self::ident).map(|(dot, property)| {
-                Ast::single(AstNode::PropertyUse {
-                    dot: dot.span.start,
-                    property,
-                })
-            })),
-        )
-            .map(|(a, b)| a.join(b))
-            .parse_next(input)
+        let a = Self::use_ident.parse_next(input)?;
+        let b = opt((symbol('.'), Self::ident).map(|(dot, property)| {
+            Ast::single(AstNode::PropertyUse {
+                dot: dot.span.start,
+                property,
+            })
+        }))
+        .parse_next(input)?;
+        Ok(a.join(b))
     }
 
     pub fn use_ident(input: &mut Input<'_>) -> PResult<Ast> {

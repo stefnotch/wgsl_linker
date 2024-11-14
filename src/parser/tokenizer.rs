@@ -1,6 +1,8 @@
 use winnow::{
     ascii::{digit0, digit1, hex_digit0, hex_digit1},
-    combinator::{alt, cut_err, dispatch, empty, eof, fail, opt, peek, repeat, terminated, trace},
+    combinator::{
+        alt, cut_err, dispatch, empty, eof, fail, opt, peek, preceded, repeat, terminated,
+    },
     error::StrContext,
     token::{any, one_of, take_till, take_while},
     Located, Parser,
@@ -18,7 +20,7 @@ pub struct Tokenizer;
 impl Tokenizer {
     pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, ()> {
         let input = Located::new(input);
-        let result = trace("tokenization", Self::tokens).parse(input);
+        let result = Self::tokens.parse(input);
         result.map_err(|_e| ())
     }
 
@@ -37,42 +39,39 @@ impl Tokenizer {
 
     pub fn token_fast<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<Token<'a>>> {
         dispatch! {peek(any);
-            '_' => dispatch! {peek((any, any)).map(|(_, b)| b);
+            '_' => dispatch! {peek(preceded(any, any));
                 c if unicode_ident::is_xid_continue(c) => Self::word.map(Some),
                 // Extra token for the _ = expr; syntax
                 _ => any.map(Token::Symbol).map(Some),
             },
             c if unicode_ident::is_xid_start(c) => Self::word.map(Some),
-            '0' => dispatch! {peek((any, any)).map(|(_, b)| b);
+            '0' => dispatch! {peek(preceded(any, any));
                 'x' | 'X' => cut_err(Self::hex_literal).context(StrContext::Label("hexadecimal number")).map(Some),
                 _ => cut_err(Self::decimal_literal).context(StrContext::Label("number")).map(Some),
             },
             c if c.is_ascii_digit() => cut_err(Self::decimal_literal).context(StrContext::Label("number")).map(Some),
-            '.' => dispatch! {peek((any, any)).map(|(_, b): (char, char)| b);
+            '.' => dispatch! {peek::<_, char, _, _>(preceded(any, any));
                 c if c.is_ascii_digit() => cut_err(Self::decimal_literal).context(StrContext::Label("floating point number")).map(Some),
                 _ => any.map(Token::Symbol).map(Some),
             },
             c if c.is_whitespace() => take_while(1.., |c: char| c.is_whitespace()).map(|_| None),
-            '/' => dispatch! {peek((any, any)).map(|(_, b)| b);
+            '/' => dispatch! {peek(preceded(any, any));
                 '/' => Self::single_line_comment.map(|_| None),
                 '*' => Self::multi_line_comment.map(|_| None),
                 _ => any.map(Token::Symbol).map(Some),
             },
             '(' | ')' | '[' | ']' | '{' | '}' => any.map(Token::Paren).map(Some),
             ':' | ';' | ',' |  '@' | '<' | '>' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => any.map(Token::Symbol).map(Some),
-            _ => fail.context(StrContext::Label("expected a valid token")),
+            _ => fail,
         }
         .parse_next(input)
     }
 
     fn single_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
-        (
-            "//",
-            cut_err((take_till(0.., Self::is_newline_start), Self::new_line))
-                .context(StrContext::Label("single line comment")),
-        )
-            .void()
-            .parse_next(input)
+        let _ = "//".parse_next(input)?;
+        let _ =
+            cut_err((take_till(0.., Self::is_newline_start), Self::new_line)).parse_next(input)?;
+        Ok(())
     }
 
     fn multi_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
