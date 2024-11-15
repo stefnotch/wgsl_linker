@@ -1004,7 +1004,6 @@ dependencies = [
  "talc",
  "test-strategy",
  "thiserror",
- "unicode-ident",
  "wasm-bindgen",
  "winnow",
 ]

@@ -40,11 +40,11 @@ impl Tokenizer {
     pub fn token_fast<'a>(input: &mut TokenizerInput<'a>) -> PResult<Option<Token<'a>>> {
         dispatch! {peek(any);
             '_' => dispatch! {peek(preceded(any, any));
-                c if unicode_ident::is_xid_continue(c) => Self::word.map(Some),
-                // Extra token for the _ = expr; syntax
-                _ => any.map(Token::Symbol).map(Some),
+                // For the _ = expr; syntax
+                '=' => any.map(Token::Symbol).map(Some),
+                // Ident starting with a _
+                c => Self::word.map(Some),
             },
-            c if unicode_ident::is_xid_start(c) => Self::word.map(Some),
             '0' => dispatch! {peek(preceded(any, any));
                 'x' | 'X' => cut_err(Self::hex_literal).context(StrContext::Label("hexadecimal number")).map(Some),
                 _ => cut_err(Self::decimal_literal).context(StrContext::Label("number")).map(Some),
@@ -62,9 +62,20 @@ impl Tokenizer {
             },
             '(' | ')' | '[' | ']' | '{' | '}' => any.map(Token::Paren).map(Some),
             ':' | ';' | ',' |  '@' | '<' | '>' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => any.map(Token::Symbol).map(Some),
-            _ => fail,
+            // Assume everything else has to be an ident (saves 10 KB)
+            c => Self::word.map(Some),
         }
         .parse_next(input)
+    }
+
+    fn is_ident(c: char) -> bool {
+        match c {
+            '/' | '(' | ')' | '[' | ']' | '{' | '}' | ':' | ';' | ',' | '@' | '<' | '>' | '='
+            | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => false,
+            _ if c.is_ascii_digit() => false,
+            _ if c.is_whitespace() => false,
+            _ => true,
+        }
     }
 
     fn single_line_comment(input: &mut TokenizerInput<'_>) -> PResult<()> {
@@ -133,8 +144,8 @@ impl Tokenizer {
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {
         dispatch! {any;
-            '_' => cut_err(take_while(1.., unicode_ident::is_xid_continue)).context(StrContext::Label("identifier starting with underscore")),
-            c if unicode_ident::is_xid_start(c) => take_while(0.., unicode_ident::is_xid_continue),
+            '_' => cut_err(take_while(1.., Self::is_ident)).context(StrContext::Label("identifier starting with underscore")),
+            c if Self::is_ident(c) => take_while(0.., Self::is_ident),
             _ => cut_err(fail).context(StrContext::Label("identifier")),
         }
         .take()
