@@ -1,0 +1,24 @@
+[package]
+edition = "2024"
+name = "linker_wasm"
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+no-panic = "0.1.33"
+talc = { version = "4.4.2", default-features = false, features = ["lock_api"] }
+wasm-bindgen = "0.2.100"
+wesl_linker = { path = "../wesl_linker", default-features = false }
+
+
+[profile.release]
+codegen-units = 1
+debug = false
+debug-assertions = false
+incremental = false
+lto = true
+opt-level = 'z'
+panic = "abort"
+rpath = false

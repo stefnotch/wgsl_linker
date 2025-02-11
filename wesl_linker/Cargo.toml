@@ -1,0 +1,23 @@
+[package]
+edition = "2024"
+name = "wesl_linker"
+version = "0.1.0"
+
+[dependencies]
+arcstr = "1.2.0"
+indexmap = "2.7.1"
+slotmap = "1.0.7"
+sourcemap = { version = "9.1.2", optional = true }
+thiserror = "2.0.11"
+winnow = { version = "0.7.2", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+proptest = "1.6.0"
+test-strategy = "0.4.0"
+
+[features]
+default = ["fs", "nya"]
+fs = []
+nya = []
+source_map = ["dep:sourcemap"]
+trace = ["winnow/debug"]

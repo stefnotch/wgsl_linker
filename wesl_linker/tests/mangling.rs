@@ -1,6 +1,6 @@
 use proptest::collection;
 use test_strategy::proptest;
-use wgsl_linker::linker::{mangle_name, unmangle_name, ModulePath};
+use wesl_linker::linker::{ModulePath, mangle_name, unmangle_name};
 
 #[proptest]
 fn mangle_proptest(

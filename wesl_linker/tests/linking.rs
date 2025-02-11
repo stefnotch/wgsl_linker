@@ -1,4 +1,4 @@
-use wgsl_linker::linker::{
+use wesl_linker::linker::{
     ImportPath, ImportedItem, ItemName, Linker, LinkerCache, LinkingOptions, ModulePath,
 };
 
@@ -38,7 +38,10 @@ fn basic_linking() {
             &mut LinkerCache::default(),
         )
         .unwrap();
-    assert_eq!(output.as_str(), "fn foo_uno() -> u32 { return 1; }\nfn bar_dos() -> u32 { return foo_uno() + foo_uno   (); }\n");
+    assert_eq!(
+        output.as_str(),
+        "fn foo_uno() -> u32 { return 1; }\nfn bar_dos() -> u32 { return foo_uno() + foo_uno   (); }\n"
+    );
 }
 
 // TODO: struct with a field called u32 and sin. And a function called sin.

@@ -7,14 +7,12 @@ use std::collections::{HashMap, HashSet};
 use arcstr::ArcStr;
 use filesystem::ReadonlyFilesystem;
 use indexmap::IndexMap;
-use slotmap::{new_key_type, SecondaryMap, SlotMap};
+use slotmap::{SecondaryMap, SlotMap, new_key_type};
 use thiserror::Error;
 
-use crate::parser::{
-    parse, Ast, AstNode, PropertiesIter, RewriteAction, VariableRewriteAction, WgslParseError,
-};
+use crate::parser::{Ast, AstNode, PropertiesIter, RewriteAction, VariableRewriteAction, parse};
 use crate::parser::{Rewriter, Visitor};
-pub use mangling::{mangle_name, unmangle_name, write_mangled_name, UnmangledName};
+pub use mangling::{UnmangledName, mangle_name, unmangle_name, write_mangled_name};
 use parsed_module::{GlobalItem, ParsedModule};
 pub use parsed_module::{ImportPath, ImportedItem, ItemName, ModuleItem, ModulePath};
 
@@ -551,8 +549,8 @@ impl Ast {
 #[cfg(test)]
 mod tests {
     use crate::linker::{
-        parsed_module::{ImportPath, ImportedItem},
         ItemName,
+        parsed_module::{ImportPath, ImportedItem},
     };
 
     use super::{Linker, ModulePath};

@@ -1,25 +1,26 @@
 use winnow::{
+    LocatingSlice, Parser,
     ascii::{digit0, digit1, hex_digit0, hex_digit1},
     combinator::{
         alt, cut_err, dispatch, empty, eof, fail, opt, peek, preceded, repeat, terminated,
     },
-    error::StrContext,
+    error::{EmptyError, StrContext},
     token::{any, one_of, take_till, take_while},
-    Located, Parser,
 };
 
 use super::token::{SpannedToken, Token};
 
-type PResult<O> = Result<O, winnow::error::ErrMode<()>>;
+// TODO: Conditionally switch to an error type with more info
+type PResult<O> = Result<O, winnow::error::ErrMode<EmptyError>>;
 
-pub type TokenizerInput<'a> = Located<&'a str>;
+pub type TokenizerInput<'a> = LocatingSlice<&'a str>;
 
 pub struct Tokenizer;
 
 /// Similar in purpose to [Naga's Lexer](https://github.com/gfx-rs/wgpu/blob/trunk/naga/src/front/wgsl/parse/lexer.rs)
 impl Tokenizer {
     pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, ()> {
-        let input = Located::new(input);
+        let input = LocatingSlice::new(input);
         let result = Self::tokens.parse(input);
         result.map_err(|_e| ())
     }
@@ -43,7 +44,7 @@ impl Tokenizer {
                 // For the _ = expr; syntax
                 '=' => any.map(Token::Symbol).map(Some),
                 // Ident starting with a _
-                c => Self::word.map(Some),
+                _c => Self::word.map(Some),
             },
             '0' => dispatch! {peek(preceded(any, any));
                 'x' | 'X' => cut_err(Self::hex_literal).context(StrContext::Label("hexadecimal number")).map(Some),
@@ -63,7 +64,7 @@ impl Tokenizer {
             '(' | ')' | '[' | ']' | '{' | '}' => any.map(Token::Paren).map(Some),
             ':' | ';' | ',' |  '@' | '<' | '>' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => any.map(Token::Symbol).map(Some),
             // Assume everything else has to be an ident (saves 10 KB)
-            c => Self::word.map(Some),
+            _c => Self::word.map(Some),
         }
         .parse_next(input)
     }

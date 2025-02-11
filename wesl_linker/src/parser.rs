@@ -4,23 +4,23 @@ mod span;
 mod token;
 mod tokenizer;
 
+pub use parser_output::{Ast, AstNode, VariableSpan};
+pub use rewriter::{PropertiesIter, RewriteAction, Rewriter, VariableRewriteAction, Visitor};
 pub use span::Span;
+pub use token::{SpannedToken, Token};
 pub use tokenizer::Tokenizer;
 use winnow::{
+    ModalParser, Parser,
     combinator::{
         alt, cut_err, delimited, dispatch, empty, eof, fail, not, opt, peek, preceded, repeat,
         separated, seq, terminated,
     },
-    error::{ErrMode, ErrorKind, ParserError, StrContext},
+    error::{EmptyError, ErrMode, ParserError, StrContext},
     stream::Stream,
     token::{any, one_of, take_till},
-    Parser,
 };
 
-pub use parser_output::{Ast, AstNode, VariableSpan};
-pub use token::{SpannedToken, Token};
-
-type PResult<O> = Result<O, winnow::error::ErrMode<()>>;
+type PResult<O> = Result<O, winnow::error::ErrMode<EmptyError>>;
 
 pub fn parse(input: &str) -> Result<Ast, ()> {
     let tokens = Tokenizer::tokenize(input)?;
@@ -968,46 +968,54 @@ impl WgslParser {
     }
 }
 
-fn word(a: &str) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ()> {
+fn word(
+    a: &str,
+) -> impl ModalParser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, EmptyError> {
     token_kind(Token::Word(a))
 }
 
-fn keyword(a: &str) -> impl Parser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, ()> {
+fn keyword(
+    a: &str,
+) -> impl ModalParser<Input<'_>, <Input<'_> as winnow::stream::Stream>::Token, EmptyError> {
     token_kind(Token::Keyword(a))
 }
 
-fn symbol<'a>(a: char) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
+fn symbol<'a>(
+    a: char,
+) -> impl ModalParser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, EmptyError> {
     token_kind(Token::Symbol(a))
 }
 
 fn must_symbol<'a>(
     a: char,
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
+) -> impl ModalParser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, EmptyError> {
     cut_err(symbol(a))
 }
 
 fn symbol_pair<'a>(
     a: [char; 2],
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Slice, ()> {
+) -> impl ModalParser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Slice, EmptyError> {
     (symbol(a[0]), symbol(a[1])).take()
 }
 
-fn paren<'a>(a: char) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
+fn paren<'a>(
+    a: char,
+) -> impl ModalParser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, EmptyError> {
     token_kind(Token::Paren(a))
 }
 
 fn parens<'a, Output>(
     a: char,
-    parser: impl Parser<Input<'a>, Output, ()>,
+    parser: impl ModalParser<Input<'a>, Output, EmptyError>,
     b: char,
-) -> impl Parser<Input<'a>, Output, ()> {
+) -> impl ModalParser<Input<'a>, Output, EmptyError> {
     delimited(paren(a), parser, cut_err(paren(b)))
 }
 
 fn comma_separated<'a, Accumulator, Output>(
     occurrences: impl Into<winnow::stream::Range>,
-    parser: impl Parser<Input<'a>, Output, ()>,
-) -> impl Parser<Input<'a>, Accumulator, ()>
+    parser: impl ModalParser<Input<'a>, Output, EmptyError>,
+) -> impl ModalParser<Input<'a>, Accumulator, EmptyError>
 where
     Accumulator: winnow::stream::Accumulate<Output>,
 {
@@ -1017,22 +1025,23 @@ where
     )
 }
 
-fn number<'a>() -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
+fn number<'a>()
+-> impl ModalParser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, EmptyError> {
     token_kind(Token::Number)
 }
 
 fn token_kind<'a>(
     token_kind: Token<'a>,
-) -> impl Parser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, ()> {
+) -> impl ModalParser<Input<'a>, <Input<'a> as winnow::stream::Stream>::Token, EmptyError> {
     move |input: &mut Input<'a>| {
         let checkpoint = input.checkpoint();
         match input.next_token() {
             Some(v) if v.token == token_kind => Ok(v),
             Some(_) => {
                 input.reset(&checkpoint);
-                Err(ErrMode::from_error_kind(input, ErrorKind::Verify))
+                Err(ParserError::from_input(input))
             }
-            None => Err(ErrMode::from_error_kind(input, ErrorKind::Token)),
+            None => Err(ParserError::from_input(input)),
         }
     }
 }

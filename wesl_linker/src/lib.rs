@@ -4,7 +4,7 @@
 //!
 //! # Example
 //! ```rust
-//! use wgsl_linker::linker::{Linker, LinkerCache, ModulePath, ItemName, ImportedItem, ImportPath};
+//! use wesl_linker::linker::{Linker, LinkerCache, ModulePath, ItemName, ImportedItem, ImportPath};
 //!
 //! let mut linker = Linker::new();
 //!
@@ -31,33 +31,7 @@
 //! let output = linker.compile(bar_module, &mut LinkerCache::default()).unwrap();
 //! ```
 
-mod parser;
+// pub mod linker;
+// pub use linker::Linker;
 
-use no_panic::no_panic;
-use wasm_bindgen::prelude::wasm_bindgen;
-
-/*
-pub mod linker;
 pub mod parser;
-
-pub use linker::Linker;
- */
-/// SAFETY: The runtime environment must be single-threaded WASM.
-#[global_allocator]
-static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
-    static mut MEMORY: [u8; 0x1000000] = [0; 0x1000000];
-    let span = talc::Span::from_const_array(std::ptr::addr_of!(MEMORY));
-    talc::Talc::new(unsafe { talc::ClaimOnOom::new(span) }).lock()
-};
-
-#[no_panic]
-#[wasm_bindgen]
-pub fn main(input: &str) -> String {
-    let a = parser::parse(input).unwrap();
-
-    if a.0.len() > 3 {
-        return "Hi".to_string();
-    } else {
-        return "Bye".to_string();
-    }
-}

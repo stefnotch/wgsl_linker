@@ -1,4 +1,4 @@
-use wgsl_linker::parser::{Token, Tokenizer};
+use wesl_linker::parser::{Token, Tokenizer};
 
 #[test]
 fn commments() {
