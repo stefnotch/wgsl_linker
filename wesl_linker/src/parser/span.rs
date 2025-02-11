@@ -1,4 +1,5 @@
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Span {
     pub start: usize,
     pub end: usize,

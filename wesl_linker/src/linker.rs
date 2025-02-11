@@ -78,8 +78,8 @@ pub enum LinkingError {
 pub enum CollectModulesError<FSError> {
     #[error(transparent)]
     ModuleNotFound(FSError),
-    #[error(transparent)]
-    ParseError(#[from] WgslParseError),
+    #[error("Parsing encountered an unknown error")]
+    ParseError,
     #[error(transparent)]
     LinkingError(#[from] LinkingError),
 }
@@ -87,7 +87,7 @@ pub enum CollectModulesError<FSError> {
 impl<T> From<AddModuleError> for CollectModulesError<T> {
     fn from(e: AddModuleError) -> Self {
         match e {
-            AddModuleError::ParseError(e) => e.into(),
+            AddModuleError::ParseError => e.into(),
             AddModuleError::LinkingError(e) => e.into(),
         }
     }
@@ -95,8 +95,8 @@ impl<T> From<AddModuleError> for CollectModulesError<T> {
 
 #[derive(Error, Debug)]
 pub enum AddModuleError {
-    #[error(transparent)]
-    ParseError(#[from] WgslParseError),
+    #[error("Parsing encountered an unknown error")]
+    ParseError,
     #[error(transparent)]
     LinkingError(#[from] LinkingError),
 }
@@ -113,7 +113,7 @@ impl Linker {
         source: Source,
     ) -> Result<ModuleKey, AddModuleError> {
         let source: ArcStr = source.into();
-        let ast = parse(&source)?;
+        let ast = parse(&source).map_err(|_| AddModuleError::ParseError)?;
         let global_items = ast.get_global_items(&source);
         let imports = ast.get_imports(&source)?;
         let module_key = self.modules.insert(ParsedModule {

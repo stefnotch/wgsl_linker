@@ -31,7 +31,7 @@
 //! let output = linker.compile(bar_module, &mut LinkerCache::default()).unwrap();
 //! ```
 
-// pub mod linker;
-// pub use linker::Linker;
+pub mod linker;
+pub use linker::Linker;
 
 pub mod parser;

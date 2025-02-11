@@ -16,8 +16,8 @@ proptest = "1.6.0"
 test-strategy = "0.4.0"
 
 [features]
-default = ["fs", "nya"]
+debug = []
+default = ["fs", "debug"]
 fs = []
-nya = []
 source_map = ["dep:sourcemap"]
 trace = ["winnow/debug"]

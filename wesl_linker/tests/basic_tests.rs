@@ -1,12 +1,10 @@
-use wesl_linker::parser::{
-    Ast, AstNode, SpannedToken, Tokenizer, VariableSpan, WgslParseError, WgslParser,
-};
+use wesl_linker::parser::{Ast, AstNode, SpannedToken, Tokenizer, VariableSpan, WgslParser};
 use winnow::Parser;
 
 fn tokenize(source: &str) -> Vec<SpannedToken> {
     Tokenizer::tokenize(source).unwrap()
 }
-fn parse(input: &str) -> Result<Ast, WgslParseError> {
+fn parse(input: &str) -> Result<Ast, ()> {
     let tokens = Tokenizer::tokenize(input)?;
     let ast = WgslParser::parse(&tokens)?;
     Ok(ast)
@@ -262,10 +260,7 @@ fn for_loop() {
         return f32(i);
     }";
     let mut t = Tokenizer::tokenize(source).unwrap();
-    let parse_result = WgslParser::statements
-        .parse(&mut t)
-        .map_err(WgslParseError::from)
-        .unwrap();
+    let parse_result = WgslParser::statements.parse(&mut t).unwrap();
     assert_eq!(
         ast_to_printable(&parse_result, &source),
         [
@@ -287,7 +282,7 @@ fn for_loop() {
 fn nested_template() {
     use PrintableNode::*;
     let source = "alias a = array<vec3<u32>>;";
-    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    let parse_result = parse(&source).unwrap();
     assert_eq!(
         ast_to_printable(&parse_result, &source),
         [
@@ -309,7 +304,7 @@ fn ptr_uses_predeclared_enumerants() {
     use PrintableNode::*;
     let source = "alias function = i32;
     alias a = ptr<storage,function,read_write>;";
-    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    let parse_result = parse(&source).unwrap();
     assert_eq!(
         ast_to_printable(&parse_result, &source),
         [
@@ -331,7 +326,7 @@ fn ptr_uses_predeclared_enumerants() {
 fn fast_parsing() {
     let source = std::fs::read_to_string("./tests/unity_webgpu_000002B8376A5020.fs.wgsl").unwrap();
     let time_before = std::time::Instant::now();
-    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    let parse_result = parse(&source).unwrap();
     println!("Took {}", time_before.elapsed().as_millis());
     assert!(!parse_result.0.is_empty());
 }
@@ -346,7 +341,7 @@ fn break_if() {
    }
 }
 ";
-    let parse_result = parse(&source).map_err(WgslParseError::from).unwrap();
+    let parse_result = parse(&source).unwrap();
     assert_eq!(
         ast_to_printable(&parse_result, &source),
         [

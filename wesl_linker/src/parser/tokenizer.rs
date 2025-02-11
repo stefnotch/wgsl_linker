@@ -69,11 +69,20 @@ impl Tokenizer {
         .parse_next(input)
     }
 
-    fn is_ident(c: char) -> bool {
+    fn is_ident_start(c: char) -> bool {
         match c {
             '/' | '(' | ')' | '[' | ']' | '{' | '}' | ':' | ';' | ',' | '@' | '<' | '>' | '='
-            | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' => false,
+            | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' | '.' => false,
             _ if c.is_ascii_digit() => false,
+            _ if c.is_whitespace() => false,
+            _ => true,
+        }
+    }
+    fn is_ident_continue(c: char) -> bool {
+        match c {
+            '/' | '(' | ')' | '[' | ']' | '{' | '}' | ':' | ';' | ',' | '@' | '<' | '>' | '='
+            | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~' | '.' => false,
+            _ if c.is_ascii_digit() => true,
             _ if c.is_whitespace() => false,
             _ => true,
         }
@@ -145,8 +154,8 @@ impl Tokenizer {
 
     pub fn ident_pattern_token<'a>(input: &mut TokenizerInput<'a>) -> PResult<&'a str> {
         dispatch! {any;
-            '_' => cut_err(take_while(1.., Self::is_ident)).context(StrContext::Label("identifier starting with underscore")),
-            c if Self::is_ident(c) => take_while(0.., Self::is_ident),
+            '_' => cut_err(take_while(1.., Self::is_ident_continue)).context(StrContext::Label("identifier starting with underscore")),
+            c if Self::is_ident_start(c) => take_while(0.., Self::is_ident_continue),
             _ => cut_err(fail).context(StrContext::Label("identifier")),
         }
         .take()

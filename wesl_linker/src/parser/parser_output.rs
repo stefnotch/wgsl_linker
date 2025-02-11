@@ -3,6 +3,7 @@ use super::Span;
 pub type VariableSpan = Span;
 
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(Debug))]
 pub enum AstNode {
     Declare(VariableSpan),
     Use(VariableSpan),
@@ -35,6 +36,7 @@ pub enum AstNode {
 }
 
 #[derive(Default, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(Debug))]
 pub struct Ast(pub Vec<AstNode>);
 impl Ast {
     pub fn new() -> Self {

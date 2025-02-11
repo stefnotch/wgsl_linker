@@ -3,6 +3,7 @@ use std::ops::Range;
 use super::Span;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(Debug))]
 pub enum Token<'a> {
     Symbol(char),
     Paren(char),
