@@ -1,9 +1,11 @@
 {
     "scripts": {
         "build": "wasm-pack build --dev --target=web --out-dir=./dist",
-        "release": "wasm-pack build --release --target=web --out-dir=./dist"
+        "release": "wasm-pack build --release --target=web --out-dir=./dist && npm run size",
+        "size": "node ./scripts/brotli-size.cjs"
     },
     "devDependencies": {
-        "wasm-pack": "^0.13.1"
+        "wasm-pack": "^0.13.1",
+        "brotli-wasm": "^3.0.1"
     }
 }

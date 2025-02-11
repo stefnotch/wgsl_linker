@@ -10,17 +10,17 @@ crate-type = ["cdylib"]
 
 [dependencies]
 arcstr = "1.2.0"
-indexmap = "2.6.0"
-no-panic = "0.1"
+indexmap = "2.7.1"
+no-panic = "0.1.33"
 slotmap = "1.0.7"
-sourcemap = { version = "9.1.0", optional = true }
+sourcemap = { version = "9.1.2", optional = true }
 talc = { version = "4.4.2", default-features = false, features = ["lock_api"] }
-thiserror = "2.0.3"
-wasm-bindgen = "0.2.95"
-winnow = { version = "0.6.20", default-features = false, features = ["alloc"] }
+thiserror = "2.0.11"
+wasm-bindgen = "0.2.100"
+winnow = { version = "0.6.26", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-proptest = "1.5.0"
+proptest = "1.6.0"
 test-strategy = "0.4.0"
 
 [features]
@@ -32,9 +32,9 @@ trace = ["winnow/debug"]
 [profile.release]
 codegen-units = 1
 debug = false
+debug-assertions = false
+incremental = false
 lto = true
 opt-level = 'z'
 panic = "abort"
 rpath = false
-debug-assertions = false
-incremental = false
