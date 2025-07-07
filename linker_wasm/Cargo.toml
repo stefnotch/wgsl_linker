@@ -1,24 +1,27 @@
 [package]
-edition = "2024"
 name = "linker_wasm"
 version = "0.1.0"
+edition = "2024"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory"]
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-no-panic = "0.1.33"
-talc = { version = "4.4.2", default-features = false, features = ["lock_api"] }
+no-panic = "0.1.35"
+talc = { version = "4.4.3", default-features = false, features = ["lock_api"] }
 wasm-bindgen = "0.2.100"
-wesl_linker = { path = "../wesl_linker", default-features = false }
-
+wesl_linker = { default-features = false, path = "../wesl_linker" }
 
 [profile.release]
-codegen-units = 1
+opt-level = "z"
 debug = false
+strip = true
 debug-assertions = false
-incremental = false
 lto = true
-opt-level = 'z'
 panic = "abort"
+incremental = false
+codegen-units = 1
 rpath = false
