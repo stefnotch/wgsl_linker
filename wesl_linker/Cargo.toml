@@ -3,21 +3,14 @@ name = "wesl_linker"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+doctest = false
+
 [dependencies]
-arcstr = "1.2.0"
-indexmap = "2.10.0"
-slotmap = "1.0.7"
-sourcemap = { version = "9.2.2", optional = true }
-thiserror = "2.0.12"
-winnow = { version = "0.7.11", default-features = false, features = ["alloc"] }
+unicode-ident = "1.0.24"
 
 [dev-dependencies]
-proptest = "1.7.0"
-test-strategy = "0.4.3"
+expect-test = "1.5.1"
 
-[features]
-debug = []
-default = ["debug", "fs"]
-fs = []
-source_map = ["dep:sourcemap"]
-trace = ["winnow/debug"]
+[build-dependencies]
+lelwel = "0.10.2"

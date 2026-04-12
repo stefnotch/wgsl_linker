@@ -1,3 +1,5 @@
+cargo-features = ["panic-immediate-abort"]
+
 [package]
 name = "linker_wasm"
 version = "0.1.0"
@@ -10,18 +12,14 @@ wasm-opt = ["-O", "--enable-bulk-memory"]
 crate-type = ["cdylib"]
 
 [dependencies]
-no-panic = "0.1.35"
-talc = { version = "4.4.3", default-features = false, features = ["lock_api"] }
-wasm-bindgen = "0.2.100"
-wesl_linker = { default-features = false, path = "../wesl_linker" }
+no-panic = "0.1.36"
+talc = { version = "5.0.3" }
+wasm-bindgen = "0.2.118"
+wesl_linker = { path = "../wesl_linker", default-features = false }
 
 [profile.release]
 opt-level = "z"
-debug = false
-strip = true
-debug-assertions = false
 lto = true
-panic = "abort"
-incremental = false
+panic = "immediate-abort"
 codegen-units = 1
 rpath = false
