@@ -5,6 +5,7 @@ use crate::{Parse, ParseEntryPoint, lexer::tokenize};
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
+#[derive(Default)]
 pub struct ParserContext {}
 
 pub struct Diagnostic {
